@@ -1,0 +1,53 @@
+name: Deploy
+
+# Продакшен: Vercel + Neon/Supabase (см. README → «Деплой»).
+# Нужны секреты репозитория: VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID, DATABASE_URL, DIRECT_URL.
+# Если в Vercel включён Git-деплой, отключите его (Settings → Git → Ignored Build Step: `exit 0`),
+# чтобы выкладка шла только после зелёного CI и применённых миграций.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    name: Migrate & deploy to Vercel
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.url }}
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Проверка секретов
+        run: |
+          for s in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
+            [ -n "${!s}" ] || { echo "::error::Не задан секрет $s"; exit 1; }
+          done
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Миграции базы
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      - run: npx vercel@39 pull --yes --environment=production --token="$VERCEL_TOKEN"
+      - run: npx vercel@39 build --prod --token="$VERCEL_TOKEN"
+      - id: deploy
+        run: echo "url=$(npx vercel@39 deploy --prebuilt --prod --token="$VERCEL_TOKEN")" >> "$GITHUB_OUTPUT"

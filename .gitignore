@@ -1,0 +1,29 @@
+# зависимости
+node_modules/
+
+# сборка Next.js (и отдельная сборка для e2e)
+.next/
+.next-e2e/
+out/
+build/
+*.tsbuildinfo
+
+# тесты
+coverage/
+playwright-report/
+test-results/
+blob-report/
+
+# окружение и секреты
+.env
+.env*.local
+certificates/
+
+# прочее
+.DS_Store
+*.log
+.vercel
+
+# не относится к CRM (наборы инструкций для Claude)
+academic-pptx/
+context-builder/

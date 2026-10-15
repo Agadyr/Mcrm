@@ -1,0 +1,335 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL") // для Neon/Supabase: прямое подключение для миграций
+}
+
+// ───────── Пользователи ─────────
+// Каждый пользователь — отдельный магазин: видит только свои телефоны, верификации и верификаторов.
+
+enum UserRole {
+  ADMIN // создаёт пользователей
+  USER // компания
+  VERIFIER // верификатор: получает телефоны от компаний, ищет людей, которые были за границей
+}
+
+model User {
+  id               String    @id @default(cuid())
+  login            String    @unique
+  passwordHash     String
+  role             UserRole  @default(USER)
+  isActive         Boolean   @default(true) // заблокированный не может войти
+  pendingApproval  Boolean   @default(false) // верификатор зарегистрировался сам и ждёт одобрения администратора
+  name             String? // ФИО
+  companyName      String?
+  phone            String?
+  sessionVersion   Int       @default(0) // увеличивается при смене пароля/блокировке — старые сессии перестают работать
+  lastLoginAt      DateTime?
+  failedLogins     Int       @default(0) // неверные пароли подряд
+  lockedUntil      DateTime? // после 5 неверных паролей вход закрыт на 15 минут
+  telegramChatId   String? // куда слать уведомления
+  telegramLinkCode String?   @unique // одноразовый код для привязки через t.me/бот?start=код
+  telegramLinkedAt DateTime?
+  telegramState    Json? // шаг диалога с ботом: какую форму сейчас заполняют в Telegram
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  events             PhoneEvent[]
+  phones             Phone[]
+  verifiers          Verifier[]
+  verifications      Verification[] @relation("VerificationOwner")
+  agentVerifications Verification[] @relation("VerificationAgent")
+  kaspiShop          KaspiShop?
+  kaspiOrders        KaspiOrder[]
+  kaspiOffers        KaspiOffer[]
+}
+
+// ───────── Товары ─────────
+
+enum PhoneCondition {
+  NEW
+  USED
+}
+
+enum PhoneStatus {
+  IN_STOCK
+  ON_VERIFICATION
+  SOLD
+  RESERVED
+  RETURNED
+}
+
+// Результат проверки IMEI на сайте РФС (imei.rfs.gov.kz)
+enum RfsStatus {
+  REGISTERED
+  NOT_REGISTERED
+}
+
+model Phone {
+  id            String         @id @default(cuid())
+  ownerId       String
+  owner         User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  model         String
+  memoryGb      Int?
+  color         String?
+  imei1         String
+  imei2         String?
+  serialNumber  String?
+  condition     PhoneCondition @default(NEW)
+  purchasePrice Int            @default(0) // тенге
+  receivedAt    DateTime       @default(now()) @db.Date
+  supplier      String?
+  note          String?
+  status        PhoneStatus    @default(IN_STOCK)
+  isVerified    Boolean        @default(false)
+  rfsStatus     RfsStatus? // последний результат проверки в РФС
+  rfsCheckedAt  DateTime? // когда проверяли
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  sales         Sale[]
+  verifications Verification[]
+  events        PhoneEvent[]
+
+  // IMEI уникален в пределах одного магазина
+  @@unique([ownerId, imei1])
+  @@unique([ownerId, imei2])
+  @@index([ownerId, status])
+  @@index([ownerId, model])
+  @@index([ownerId, receivedAt])
+  @@index([serialNumber])
+  @@index([imei2])
+}
+
+enum PaymentMethod {
+  CASH
+  KASPI
+  TRANSFER
+  INSTALLMENT
+  DEBT // продажа в долг: деньги покупатель принесёт потом
+}
+
+// Активная продажа — запись с cancelledAt = null. Отменённые остаются для истории.
+// Прибыль не хранится: salePrice − phone.purchasePrice.
+model Sale {
+  id            String        @id @default(cuid())
+  phoneId       String
+  phone         Phone         @relation(fields: [phoneId], references: [id], onDelete: Cascade)
+  salePrice     Int
+  soldAt        DateTime      @db.Date
+  buyerName     String?
+  buyerPhone    String?
+  paymentMethod PaymentMethod
+  paidAmount    Int           @default(0) // сколько покупатель уже заплатил (сумма оплат); долг = salePrice − paidAmount
+  dueDate       DateTime?     @db.Date // до какого числа обещал вернуть долг
+  note          String?
+  cancelledAt   DateTime?
+  createdAt     DateTime      @default(now())
+
+  payments   SalePayment[]
+  kaspiOrder KaspiOrder?
+
+  @@index([soldAt])
+  @@index([phoneId, cancelledAt])
+  @@index([buyerName])
+}
+
+/** Оплата по продаже: первая — при продаже, следующие — когда покупатель возвращает долг */
+model SalePayment {
+  id        String        @id @default(cuid())
+  saleId    String
+  sale      Sale          @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  amount    Int
+  paidAt    DateTime      @db.Date
+  method    PaymentMethod
+  note      String?
+  createdAt DateTime      @default(now())
+
+  @@index([saleId, paidAt])
+}
+
+// ───────── Верификация ─────────
+
+model Verifier {
+  id        String   @id @default(cuid())
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  fullName  String
+  phone     String?
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  verifications Verification[]
+
+  @@index([ownerId, fullName])
+}
+
+enum VerificationStatus {
+  HANDED
+  IN_PROGRESS
+  VERIFIED
+  NOT_REGISTERED // пробовали верифицировать, но IMEI не зарегистрирован в базе
+  REJECTED
+}
+
+enum ImeiGiven {
+  IMEI1
+  IMEI2
+  BOTH
+}
+
+// Верификация. Два варианта:
+//  1) компания сама отдаёт IMEI человеку: verifierId — человек из её справочника, payment — оплата ему;
+//  2) через верификатора (agentId): компания платит ему agentFee, а он сам находит человека
+//     (verifierId — из справочника верификатора) и платит ему payment. Компания видит только статус и agentFee.
+model Verification {
+  id      String @id @default(cuid())
+  ownerId String // владелец телефона (компания или сам верификатор)
+  owner   User   @relation("VerificationOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  agentId     String? // верификатор-аккаунт, которому передан телефон
+  agent       User?     @relation("VerificationAgent", fields: [agentId], references: [id], onDelete: SetNull)
+  agentFee    Int       @default(0) // сколько владелец платит верификатору
+  agentPaid   Boolean   @default(false)
+  agentPaidAt DateTime?
+  agentNote   String? // заметка верификатора — компания её не видит
+
+  phoneId String?
+  phone   Phone?  @relation(fields: [phoneId], references: [id], onDelete: SetNull)
+
+  // Снимок данных телефона (заполняется всегда)
+  phoneModel   String
+  imei1        String
+  imei2        String?
+  serialNumber String?
+
+  verifierId  String? // человек, который проводит верификацию (может быть ещё не найден верификатором)
+  verifier    Verifier?          @relation(fields: [verifierId], references: [id], onDelete: Restrict)
+  country     String?
+  handedAt    DateTime           @db.Date
+  imeiGiven   ImeiGiven          @default(IMEI1)
+  payment     Int                @default(0)
+  isPaid      Boolean            @default(false)
+  paidAt      DateTime?
+  status      VerificationStatus @default(HANDED)
+  completedAt DateTime?          @db.Date
+  note        String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@index([ownerId, status])
+  @@index([agentId, status])
+  @@index([imei1])
+  @@index([verifierId])
+  @@index([phoneId])
+}
+
+// ───────── История телефона ─────────
+
+enum PhoneEventType {
+  CREATED
+  UPDATED
+  STATUS_CHANGED
+  SOLD
+  SALE_CANCELLED
+  SALE_PAYMENT
+  VERIFICATION_CREATED
+  VERIFICATION_UPDATED
+  VERIFICATION_DELETED
+  IMPORTED
+  RFS_CHECK
+}
+
+model PhoneEvent {
+  id        String         @id @default(cuid())
+  phoneId   String
+  phone     Phone          @relation(fields: [phoneId], references: [id], onDelete: Cascade)
+  type      PhoneEventType
+  message   String
+  userId    String?
+  user      User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt DateTime       @default(now())
+
+  @@index([phoneId, createdAt])
+}
+
+// ─── Kaspi магазин ───────────────────────────────────────────────
+
+/** Подключение магазина на Kaspi.kz: токен API из кабинета продавца (зашифрован ключом из AUTH_SECRET) */
+model KaspiShop {
+  id            String    @id @default(cuid())
+  ownerId       String    @unique
+  owner         User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  tokenEnc      String // токен, зашифрованный AES-256-GCM
+  tokenHint     String // последние 4 символа — показать, какой токен сохранён
+  shopName      String? // название магазина, как его называет компания
+  status        String    @default("ACTIVE") // ACTIVE — работает, INVALID — Kaspi не принял токен
+  lastError     String?
+  connectedAt   DateTime  @default(now())
+  lastCheckedAt DateTime?
+  autoAccept    Boolean   @default(false) // принимать новые заказы автоматически при синхронизации
+  lastSyncAt    DateTime?
+  lastSyncError String?
+  merchantId    String? // ID магазина в Kaspi — для прайс-листа
+  storeId       String? // код пункта самовывоза (склада) в Kaspi, например PP1
+  feedToken     String?   @unique // секрет в ссылке на прайс-лист, по которой Kaspi забирает цены и остатки
+  updatedAt     DateTime  @updatedAt
+}
+
+/** Товар в прайс-листе Kaspi. Остаток считается по складу CRM: телефоны «В наличии» с этой моделью (памятью, цветом) */
+model KaspiOffer {
+  id           String   @id @default(cuid())
+  ownerId      String
+  owner        User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  sku          String // артикул — как у товара в кабинете Kaspi
+  title        String // название для Kaspi
+  brand        String?
+  model        String // модель в CRM, по которой считается остаток
+  memoryGb     Int?
+  color        String?
+  price        Int
+  preOrderDays Int? // предзаказ, если телефонов нет (до 30 дней)
+  active       Boolean  @default(true) // false — снят с продажи в Kaspi
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([ownerId, sku])
+}
+
+/** Заказ из Kaspi магазина (копия для CRM, обновляется синхронизацией) */
+model KaspiOrder {
+  id                String    @id @default(cuid())
+  ownerId           String
+  owner             User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  kaspiId           String // id заказа в API Kaspi
+  code              String // номер заказа, который видит покупатель
+  state             String // этап: NEW, SIGN_REQUIRED, PICKUP, DELIVERY, KASPI_DELIVERY, ARCHIVE
+  status            String // статус: APPROVED_BY_BANK, ACCEPTED_BY_MERCHANT, COMPLETED, CANCELLED…
+  totalPrice        Int
+  paymentMode       String?
+  deliveryMode      String?
+  isKaspiDelivery   Boolean   @default(false)
+  orderedAt         DateTime
+  plannedDeliveryAt DateTime?
+  customerName      String?
+  customerPhone     String?
+  address           String?
+  entries           Json      @default("[]") // [{ id, name, code, quantity, price, total, imeiRequired }]
+  imeiRequired      Boolean   @default(false) // Kaspi требует указать IMEI телефона (с 25.05.2025 — для всех телефонов)
+  imeiSentAt        DateTime? // когда IMEI отправлены в Kaspi
+  waybill           String? // ссылка на накладную Kaspi Доставки
+  waybillNumber     String?
+  saleId            String?   @unique // продажа в CRM, оформленная по этому заказу
+  sale              Sale?     @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([ownerId, kaspiId])
+  @@index([ownerId, state])
+  @@index([ownerId, orderedAt])
+}
