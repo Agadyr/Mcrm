@@ -25,8 +25,8 @@ export function WhatsAppLink({
       title="Написать в WhatsApp"
       aria-label="Написать в WhatsApp"
       className={cn(
-        "inline-flex shrink-0 items-center gap-1 rounded-full text-xs font-medium text-emerald-700 transition-colors hover:bg-emerald-50",
-        label ? "h-7 bg-emerald-50 px-2.5" : "size-7 justify-center",
+        "inline-flex shrink-0 items-center gap-1 rounded-full text-xs font-medium text-emerald-700 dark:text-emerald-400 transition-colors hover:bg-emerald-50 dark:hover:bg-emerald-950",
+        label ? "h-7 bg-emerald-50 px-2.5 dark:bg-emerald-950" : "size-7 justify-center",
         className
       )}
     >

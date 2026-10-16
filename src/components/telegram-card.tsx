@@ -5,11 +5,13 @@ import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { BellRingIcon, CheckCircle2Icon, Loader2Icon, SendIcon, UnlinkIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { formatDateTime } from "@/lib/format"
 import {
   checkTelegramLinkAction,
   sendTestTelegramAction,
+  setMorningReminderAction,
   startTelegramLinkAction,
   unlinkTelegramAction,
 } from "@/server/actions/telegram"
@@ -25,11 +27,14 @@ export function TelegramCard({
   linkedAt,
   isAdmin,
   role,
+  morningReminder = true,
 }: {
   configured: boolean
   linkedAt: Date | null
   isAdmin: boolean
   role: "ADMIN" | "USER" | "VERIFIER"
+  /** утреннее напоминание о просроченных долгах и долгих верификациях (только компаниям) */
+  morningReminder?: boolean
 }) {
   const router = useRouter()
   const [waiting, setWaiting] = useState(false)
@@ -96,16 +101,17 @@ export function TelegramCard({
   if (linkedAt) {
     return (
       <div className="flex flex-col gap-3">
-        <div className="flex items-start gap-3 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-900">
-          <CheckCircle2Icon className="mt-0.5 size-5 shrink-0 text-emerald-700" />
+        <div className="flex items-start gap-3 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-900 dark:bg-emerald-950 dark:text-emerald-100">
+          <CheckCircle2Icon className="mt-0.5 size-5 shrink-0 text-emerald-700 dark:text-emerald-400" />
           <div>
             <div className="font-medium">Подключено</div>
-            <div className="text-emerald-800/80">
+            <div className="text-emerald-800/80 dark:text-emerald-200/80">
               С {formatDateTime(linkedAt)}. Приходят уведомления: {what}.
             </div>
-            {role !== "VERIFIER" && <div className="mt-1 text-emerald-800/80">{BOT_FEATURES}</div>}
+            {role !== "VERIFIER" && <div className="mt-1 text-emerald-800/80 dark:text-emerald-200/80">{BOT_FEATURES}</div>}
           </div>
         </div>
+        {role !== "VERIFIER" && <MorningReminderToggle enabled={morningReminder} />}
         <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
@@ -162,5 +168,38 @@ export function TelegramCard({
         </Button>
       )}
     </div>
+  )
+}
+
+/** Переключатель утреннего напоминания: просроченные долги и телефоны, которые долго на верификации */
+function MorningReminderToggle({ enabled }: { enabled: boolean }) {
+  const [value, setValue] = useState(enabled)
+  const [pending, startTransition] = useTransition()
+  return (
+    <label className="flex cursor-pointer items-start gap-2.5 text-sm">
+      <Checkbox
+        className="mt-0.5"
+        checked={value}
+        disabled={pending}
+        onCheckedChange={(c) => {
+          const next = !!c
+          setValue(next)
+          startTransition(async () => {
+            const r = await setMorningReminderAction(next)
+            if (!r.ok) {
+              setValue(!next)
+              toast.error(r.error)
+            }
+          })
+        }}
+      />
+      <span>
+        <span className="block font-medium">Утреннее напоминание</span>
+        <span className="block text-muted-foreground">
+          Раз в день утром: просроченные долги покупателей и телефоны, которые дольше 14 дней на верификации. Если всё в
+          порядке — не пишем.
+        </span>
+      </span>
+    </label>
   )
 }

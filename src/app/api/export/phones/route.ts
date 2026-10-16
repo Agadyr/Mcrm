@@ -11,8 +11,10 @@ export async function GET(req: NextRequest) {
   if (!user) return Response.json({ error: "Требуется вход" }, { status: 401 })
 
   const filters = parsePhoneFilters(Object.fromEntries(req.nextUrl.searchParams))
+  // ids — выгрузить только отмеченные в списке телефоны (через запятую)
+  const ids = (req.nextUrl.searchParams.get("ids") ?? "").split(",").filter(Boolean).slice(0, 500)
   const phones = await prisma.phone.findMany({
-    where: { AND: [buildPhoneWhere(filters, user.id), { ownerId: user.id }] },
+    where: { AND: [buildPhoneWhere(filters, user.id), { ownerId: user.id }, ...(ids.length ? [{ id: { in: ids } }] : [])] },
     orderBy: buildPhoneOrderBy(filters.sort),
     include: { sales: { where: { cancelledAt: null }, take: 1, orderBy: { createdAt: "desc" } } },
   })

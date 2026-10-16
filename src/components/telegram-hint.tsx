@@ -8,7 +8,7 @@ export function TelegramHint({ linked, text }: { linked: boolean; text: string }
   return (
     <Link
       href="/profile#telegram"
-      className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-sky-200 bg-sky-50/70 p-4 transition-colors hover:bg-sky-50"
+      className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-sky-200 bg-sky-50/70 p-4 transition-colors hover:bg-sky-50 dark:border-sky-900 dark:bg-sky-950/40 dark:hover:bg-sky-950/60"
     >
       <span className="flex items-center gap-3">
         <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[#229ED9] text-white">

@@ -29,9 +29,9 @@ export default async function UsersPage() {
         actions={<CreateUserButton />}
       />
       {requests.length > 0 && (
-        <section className="mb-6 rounded-2xl border border-amber-200 bg-amber-50/60 p-4">
+        <section className="mb-6 rounded-2xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-900 dark:bg-amber-950/40">
           <h2 className="mb-1 flex items-center gap-2 font-semibold">
-            <ClockIcon className="size-4 text-amber-700" /> Заявки верификаторов
+            <ClockIcon className="size-4 text-amber-700 dark:text-amber-400" /> Заявки верификаторов
             <span className="rounded-full bg-amber-500 px-2 text-xs text-white">{requests.length}</span>
           </h2>
           <p className="mb-3 text-sm text-muted-foreground">
@@ -79,7 +79,7 @@ export default async function UsersPage() {
               <span
                 className={cn(
                   "inline-flex h-6 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium",
-                  u.isActive ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
+                  u.isActive ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : "bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
                 )}
               >
                 <span className={cn("size-1.5 rounded-full", u.isActive ? "bg-emerald-500" : "bg-rose-500")} />

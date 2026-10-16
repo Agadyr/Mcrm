@@ -168,7 +168,7 @@ export async function AgentDashboard({
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className={cn("font-semibold tabular-nums", debt > 0 ? "text-amber-700" : "text-muted-foreground")}>
+                    <div className={cn("font-semibold tabular-nums", debt > 0 ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>
                       {debt > 0 ? formatMoney(debt) : "оплачено"}
                     </div>
                     {debt > 0 && <div className="text-xs text-muted-foreground">должны вам</div>}

@@ -43,16 +43,22 @@ export function escapeHtml(s: string | null | undefined) {
   return (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 }
 
-/** Отправить сообщение. Ошибки не пробрасываем — уведомление не должно ломать основное действие. */
-export async function sendTelegram(chatId: string | null | undefined, html: string, link?: { url: string | null; text: string }) {
+export type TelegramLink = { url: string | null; text: string }
+
+/**
+ * Отправить сообщение. Ошибки не пробрасываем — уведомление не должно ломать основное действие.
+ * link — кнопка-ссылка под сообщением (или несколько, каждая в своей строке); без адреса кнопка не добавляется.
+ */
+export async function sendTelegram(chatId: string | null | undefined, html: string, link?: TelegramLink | TelegramLink[]) {
   if (!chatId || !isTelegramConfigured()) return false
+  const buttons = (Array.isArray(link) ? link : link ? [link] : []).filter((l) => l.url)
   try {
     await telegramApi("sendMessage", {
       chat_id: chatId,
       text: html,
       parse_mode: "HTML",
       disable_web_page_preview: true,
-      ...(link?.url ? { reply_markup: { inline_keyboard: [[{ text: link.text, url: link.url }]] } } : {}),
+      ...(buttons.length ? { reply_markup: { inline_keyboard: buttons.map((l) => [{ text: l.text, url: l.url }]) } } : {}),
     })
     return true
   } catch (e) {

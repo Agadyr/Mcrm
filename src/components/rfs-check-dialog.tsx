@@ -160,8 +160,8 @@ function ImeiRow({ label, value }: { label: string; value: string }) {
         </span>
         <div className="grid grid-cols-2 gap-2">
           <Button variant="outline" onClick={() => void copy()} aria-label={`Копировать ${label}`}>
-            {copied ? <CheckIcon className="text-emerald-700" /> : <CopyIcon />}
-            <span className={cn(copied && "text-emerald-700")}>{copied ? "Скопировано" : "Копировать"}</span>
+            {copied ? <CheckIcon className="text-emerald-700 dark:text-emerald-400" /> : <CopyIcon />}
+            <span className={cn(copied && "text-emerald-700 dark:text-emerald-400")}>{copied ? "Скопировано" : "Копировать"}</span>
           </Button>
           <Button onClick={copyAndOpen}>
             <ExternalLinkIcon /> Проверить
@@ -185,7 +185,7 @@ export function RfsBadge({ status, checkedAt }: { status: RfsStatus | null; chec
       title={`РФС: ${RFS_STATUS_LABEL[status]}${checkedAt ? `, ${formatDateTime(checkedAt)}` : ""}`}
       className={cn(
         "inline-flex h-6 shrink-0 items-center gap-1 rounded-full px-2 text-xs font-medium whitespace-nowrap ring-1 ring-inset ring-current/10",
-        ok ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"
+        ok ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : "bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
       )}
     >
       {ok ? <CheckIcon className="size-3.5" /> : <XCircleIcon className="size-3.5" />}

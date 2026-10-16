@@ -180,7 +180,7 @@ export default async function DashboardPage() {
                 </div>
                 <div>
                   <div className="text-xs text-muted-foreground">Прибыль</div>
-                  <div className={cn("font-semibold tabular-nums", p.profit < 0 ? "text-destructive" : "text-emerald-700")}>
+                  <div className={cn("font-semibold tabular-nums", p.profit < 0 ? "text-destructive" : "text-emerald-700 dark:text-emerald-400")}>
                     {formatMoney(p.profit)}
                   </div>
                 </div>
@@ -211,7 +211,7 @@ export default async function DashboardPage() {
                   <div
                     className={cn(
                       "text-xs tabular-nums",
-                      s.salePrice - s.phone.purchasePrice < 0 ? "text-destructive" : "text-emerald-700"
+                      s.salePrice - s.phone.purchasePrice < 0 ? "text-destructive" : "text-emerald-700 dark:text-emerald-400"
                     )}
                   >
                     +{formatMoney(s.salePrice - s.phone.purchasePrice)}

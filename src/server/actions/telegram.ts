@@ -56,3 +56,12 @@ export async function sendTestTelegramAction(): Promise<ActionResult> {
   )
   return sent ? { ok: true, data: undefined } : { ok: false, error: "Не удалось отправить. Подключите Telegram заново." }
 }
+
+/** Включить или выключить утреннее напоминание (просроченные долги, долгие верификации) */
+export async function setMorningReminderAction(enabled: boolean): Promise<ActionResult> {
+  const user = await requireUser()
+  if (user.role === "VERIFIER") return { ok: false, error: "Напоминание — только для компаний" }
+  await prisma.user.update({ where: { id: user.id }, data: { morningReminder: enabled === true } })
+  revalidatePath("/profile")
+  return { ok: true, data: undefined }
+}

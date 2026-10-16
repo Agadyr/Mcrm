@@ -46,6 +46,9 @@ model User {
   kaspiShop          KaspiShop?
   kaspiOrders        KaspiOrder[]
   kaspiOffers        KaspiOffer[]
+
+  morningReminder Boolean   @default(true) // утреннее напоминание в Telegram: просроченные долги и долгие верификации
+  lastReminderAt  DateTime? // когда последний раз отправили напоминание — не больше одного в день (по Алматы)
 }
 
 // ───────── Товары ─────────
