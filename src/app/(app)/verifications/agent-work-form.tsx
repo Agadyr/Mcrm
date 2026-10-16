@@ -101,7 +101,7 @@ export function AgentWorkForm({
             <div className="text-xs text-muted-foreground">Компания платит вам</div>
             <div className="font-semibold tabular-nums">
               {formatMoney(job.agentFee)}{" "}
-              <span className={cn("text-xs font-normal", job.agentPaid ? "text-emerald-700" : "text-amber-700")}>
+              <span className={cn("text-xs font-normal", job.agentPaid ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")}>
                 {job.agentPaid ? "оплачено" : "не оплачено"}
               </span>
             </div>
@@ -222,7 +222,7 @@ export function AgentWorkForm({
         </Label>
         <div className="flex items-center justify-between rounded-xl bg-muted px-3 py-2 text-sm">
           <span className="text-muted-foreground">Ваша прибыль</span>
-          <span className={cn("font-semibold tabular-nums", profit < 0 ? "text-destructive" : "text-emerald-700")}>
+          <span className={cn("font-semibold tabular-nums", profit < 0 ? "text-destructive" : "text-emerald-700 dark:text-emerald-400")}>
             {formatMoney(profit)}
           </span>
         </div>

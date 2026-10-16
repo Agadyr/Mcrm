@@ -108,7 +108,7 @@ export function CreateUserButton() {
           {created ? (
             <>
               <DialogHeader className="items-center text-center">
-                <span className="mb-1 flex size-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
+                <span className="mb-1 flex size-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
                   <CheckCircle2Icon className="size-6" />
                 </span>
                 <DialogTitle>Пользователь создан</DialogTitle>

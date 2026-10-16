@@ -71,3 +71,25 @@ export const salePaymentSchema = z.object({
 })
 
 export type SalePaymentInput = z.input<typeof salePaymentSchema>
+
+// ── Смена статуса вручную (форма телефона и массовая смена в списке)
+
+/** Статусы, которые можно поставить вручную. «Продан» — только кнопкой «Продать», проданный меняется отменой продажи. */
+export const MANUAL_PHONE_STATUSES = ["IN_STOCK", "ON_VERIFICATION", "RESERVED", "RETURNED"] as const
+/** Что предлагаем при массовой смене: «На верификации» ставится сам, когда телефон передают верификатору */
+export const BULK_PHONE_STATUSES = ["IN_STOCK", "RESERVED", "RETURNED"] as const
+
+type PhoneStatusValue = z.infer<typeof phoneStatusEnum>
+
+/** Почему нельзя вручную сменить статус from → to (null — можно) */
+export function manualStatusError(from: PhoneStatusValue, to: PhoneStatusValue): string | null {
+  if (from === "SOLD") return "Статус проданного телефона меняется только отменой продажи"
+  if (to === "SOLD") return "«Продан» ставится кнопкой «Продать»"
+  return null
+}
+
+/** Массовая смена статуса: до 200 телефонов за раз */
+export const bulkPhoneStatusSchema = z.object({
+  ids: z.array(z.string().min(1).max(50)).min(1, "Выберите телефоны").max(200, "Не больше 200 телефонов за раз"),
+  status: z.enum(MANUAL_PHONE_STATUSES),
+})

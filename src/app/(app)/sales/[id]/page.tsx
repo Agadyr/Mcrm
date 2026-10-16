@@ -55,13 +55,13 @@ export default async function SalePage({ params }: { params: Promise<{ id: strin
           <span className="flex flex-wrap items-center gap-2">
             Продан {formatDate(sale.soldAt)}
             {sale.cancelledAt ? (
-              <Badge className="bg-zinc-100 text-zinc-600">продажа отменена</Badge>
+              <Badge className="bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">продажа отменена</Badge>
             ) : hasDebt ? (
-              <Badge className={late ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}>
+              <Badge className={late ? "bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300" : "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300"}>
                 {late ? "долг просрочен" : "в долг"}
               </Badge>
             ) : (
-              <Badge className="bg-emerald-50 text-emerald-700">оплачено</Badge>
+              <Badge className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">оплачено</Badge>
             )}
           </span>
         }

@@ -207,7 +207,7 @@ export default async function PhonePage({ params }: { params: Promise<{ id: stri
                 <Row label="Проверка в РФС">
                   {phone.rfsStatus ? (
                     <>
-                      <span className={phone.rfsStatus === "REGISTERED" ? "text-emerald-700" : "text-destructive"}>
+                      <span className={phone.rfsStatus === "REGISTERED" ? "text-emerald-700 dark:text-emerald-400" : "text-destructive"}>
                         {RFS_STATUS_LABEL[phone.rfsStatus]}
                       </span>
                       <span className="block text-xs text-muted-foreground">{formatDateTime(phone.rfsCheckedAt)}</span>
@@ -246,7 +246,7 @@ export default async function PhonePage({ params }: { params: Promise<{ id: stri
                       <Row label="Передан вам">{formatDate(verifications[0].handedAt)}</Row>
                       <Row label="Компания платит">
                         <span className="tabular-nums">{formatMoney(verifications[0].agentFee)}</span>
-                        <span className={cn("block text-xs", verifications[0].agentPaid ? "text-emerald-700" : "text-amber-700")}>
+                        <span className={cn("block text-xs", verifications[0].agentPaid ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")}>
                           {verifications[0].agentPaid ? "оплачено" : "не оплачено"}
                         </span>
                       </Row>

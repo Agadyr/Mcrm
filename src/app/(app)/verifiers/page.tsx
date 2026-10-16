@@ -63,7 +63,7 @@ export default async function VerifiersPage() {
                     <div className="text-base font-semibold text-foreground tabular-nums">{a.verifiedCount}</div>готово
                   </div>
                   <div className="rounded-xl bg-muted/60 py-2">
-                    <div className={cn("text-base font-semibold tabular-nums", a.debtSum ? "text-amber-700" : "text-foreground")}>
+                    <div className={cn("text-base font-semibold tabular-nums", a.debtSum ? "text-amber-700 dark:text-amber-400" : "text-foreground")}>
                       {a.debtSum ? formatMoney(a.debtSum) : "0"}
                     </div>
                     вы должны

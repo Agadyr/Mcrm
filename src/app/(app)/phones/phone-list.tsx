@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils"
 import { listClasses, type ListLayout } from "@/lib/list-layout"
 import type { PhoneListItem } from "@/server/phone-filters"
 import { PhoneActions, SellButton } from "./phone-actions"
+import { PhoneSelectAll, PhoneSelectCheckbox } from "./phone-selection"
 import { RfsBadge, RfsCheckButton } from "@/components/rfs-check-dialog"
 
 function Badges({ phone }: { phone: PhoneListItem }) {
@@ -90,6 +91,9 @@ export function PhoneList({ phones, viewerId, layout = "both" }: { phones: Phone
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50 text-left text-xs font-medium text-muted-foreground">
+                <th className="w-0 py-3 pr-0 pl-4">
+                  <PhoneSelectAll />
+                </th>
                 <th className="px-4 py-3 font-medium">Телефон</th>
                 <th className="px-4 py-3 font-medium">IMEI / серийный</th>
                 <th className="px-4 py-3 font-medium">Статус</th>
@@ -104,6 +108,9 @@ export function PhoneList({ phones, viewerId, layout = "both" }: { phones: Phone
                 const sale = own ? p.sales[0] : undefined
                 return (
                   <tr key={p.id} className={cn("group align-top transition-colors hover:bg-muted/40", p.status === "SOLD" && "bg-muted/20")}>
+                    <td className="py-3.5 pr-0 pl-4">
+                      <PhoneSelectCheckbox id={p.id} />
+                    </td>
                     <td className="px-4 py-3">
                       <Link href={`/phones/${p.id}`} className="font-semibold hover:text-primary">
                         {p.model}
@@ -167,8 +174,10 @@ export function PhoneList({ phones, viewerId, layout = "both" }: { phones: Phone
             const own = p.ownerId === viewerId
             const sale = own ? p.sales[0] : undefined
             return (
-              <div key={p.id} className="rounded-2xl border bg-card shadow-xs">
-                <Link href={`/phones/${p.id}`} className="block p-4 pb-3">
+              <div key={p.id} className="relative rounded-2xl border bg-card shadow-xs">
+                {/* отметка — поверх карточки слева, чтобы нажатие не открывало телефон */}
+                <PhoneSelectCheckbox id={p.id} className="absolute top-4 left-4 z-10" />
+                <Link href={`/phones/${p.id}`} className={cn("block p-4 pb-3", own && "pl-12")}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="font-semibold">{p.model}</div>

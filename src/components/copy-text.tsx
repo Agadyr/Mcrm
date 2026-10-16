@@ -55,7 +55,7 @@ export function CopyText({
           quiet && !copied && "[@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100"
         )}
       >
-        {copied ? <CheckIcon className="size-3.5 text-emerald-700" /> : <CopyIcon className="size-3.5" />}
+        {copied ? <CheckIcon className="size-3.5 text-emerald-700 dark:text-emerald-400" /> : <CopyIcon className="size-3.5" />}
       </button>
     </span>
   )

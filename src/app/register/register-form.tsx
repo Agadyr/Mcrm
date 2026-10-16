@@ -46,7 +46,7 @@ export function RegisterForm() {
   if (sent) {
     return (
       <div className="w-full max-w-md rounded-3xl border bg-card p-7 text-center shadow-xl shadow-primary/5">
-        <span className="mx-auto mb-4 flex size-14 items-center justify-center rounded-2xl bg-amber-50 text-amber-700">
+        <span className="mx-auto mb-4 flex size-14 items-center justify-center rounded-2xl bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
           <ClockIcon className="size-7" />
         </span>
         <h1 className="text-xl font-semibold">Заявка отправлена</h1>
