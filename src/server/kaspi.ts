@@ -186,6 +186,14 @@ export async function listOrders(token: string, state: KaspiState, now = Date.no
   return out
 }
 
+/** Один заказ по номеру — без окна в 14 дней (для старых незавершённых заказов) */
+export async function getOrderByCode(token: string, code: string, fallbackState: string): Promise<KaspiOrderData | null> {
+  const q = new URLSearchParams({ "page[number]": "0", "page[size]": "1", "filter[orders][code]": code }).toString()
+  const res = await request<JsonApiList>(token, `/orders?${q}`)
+  const item = res?.data?.[0]
+  return item ? parseOrder(item, fallbackState) : null
+}
+
 /** Товары заказа: название берём из offer/названия позиции, иначе — из карточки товара по ссылке */
 export async function getOrderEntries(token: string, entriesUrl: string): Promise<KaspiEntry[]> {
   const res = await request<JsonApiList>(token, entriesUrl)
