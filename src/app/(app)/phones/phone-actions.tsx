@@ -17,6 +17,9 @@ import { RfsCheckDialog, type RfsTarget } from "@/components/rfs-check-dialog"
 // форма продажи (react-hook-form + zod) нужна только по нажатию «Продать» — её код грузится тогда же
 const SellDialog = dynamic(() => import("./sell-dialog").then((m) => m.SellDialog), { ssr: false })
 
+/** Почему у проданного телефона недоступно «Удалить» */
+const SOLD_DELETE_HINT = "Продан — сначала отмените продажу"
+
 export type PhoneActionsTarget = {
   id: string
   title: string
@@ -102,7 +105,7 @@ export function PhoneActions({
         title="Удалить телефон?"
         description={
           <>
-            <b>{phone.title}</b> будет удалён вместе с историей и продажами. Верификации останутся, но без связи с товаром. Это действие нельзя отменить.
+            <b>{phone.title}</b> будет удалён вместе с историей и отменёнными продажами. Верификации останутся, но без связи с товаром. Это действие нельзя отменить.
           </>
         }
         confirmLabel="Удалить"
@@ -127,9 +130,11 @@ export function PhoneActions({
         <Link href={`/phones/${phone.id}/edit`} className={buttonVariants({ variant: "outline" })}>
           <PencilIcon /> Редактировать
         </Link>
-        <Button variant="destructive" onClick={() => setDeleteOpen(true)}>
+        {/* проданный не удаляем — иначе пропадут выручка и долг покупателя */}
+        <Button variant="destructive" disabled={sold} title={sold ? SOLD_DELETE_HINT : undefined} onClick={() => setDeleteOpen(true)}>
           <Trash2Icon /> Удалить
         </Button>
+        {sold && <p className="basis-full text-xs text-muted-foreground">{SOLD_DELETE_HINT}</p>}
         {dialogs}
       </div>
     )
@@ -167,8 +172,16 @@ export function PhoneActions({
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
-              <Trash2Icon /> Удалить
+            <DropdownMenuItem variant="destructive" disabled={sold} onClick={() => setDeleteOpen(true)}>
+              <Trash2Icon />
+              {sold ? (
+                <span className="flex flex-col">
+                  Удалить
+                  <span className="text-xs text-muted-foreground">{SOLD_DELETE_HINT}</span>
+                </span>
+              ) : (
+                "Удалить"
+              )}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

@@ -22,6 +22,7 @@ import {
 } from "@/server/phone-filters"
 import { PhoneFiltersBar } from "./phone-filters-bar"
 import { PhoneList } from "./phone-list"
+import { PhoneBulkBar, PhoneSelectionProvider } from "./phone-selection"
 import { getListLayout } from "@/lib/list-layout"
 
 export const metadata: Metadata = { title: "Товары" }
@@ -141,7 +142,14 @@ export default async function PhonesPage({ searchParams }: { searchParams: Promi
           )}
         </EmptyState>
       ) : (
-        <PhoneList phones={phones} viewerId={user.id} layout={await getListLayout()} />
+        // выбор сбрасывается при смене фильтров и страницы
+        <PhoneSelectionProvider
+          key={`${exportQs}|${filters.page}`}
+          phones={phones.filter((p) => p.ownerId === user.id).map((p) => ({ id: p.id, status: p.status }))}
+        >
+          <PhoneList phones={phones} viewerId={user.id} layout={await getListLayout()} />
+          <PhoneBulkBar />
+        </PhoneSelectionProvider>
       )}
       <Pagination page={filters.page} pageCount={Math.ceil(total / PAGE_SIZE)} basePath="/phones" params={params} />
     </>

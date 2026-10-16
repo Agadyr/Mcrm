@@ -2,10 +2,10 @@ import Link from "next/link"
 import { cn } from "@/lib/utils"
 
 const TONES = {
-  emerald: "bg-emerald-50 text-emerald-700",
+  emerald: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
   indigo: "bg-secondary text-primary",
-  amber: "bg-amber-50 text-amber-700",
-  rose: "bg-rose-50 text-rose-600",
+  amber: "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
+  rose: "bg-rose-50 text-rose-600 dark:bg-rose-950 dark:text-rose-300",
 }
 
 export function Stat({
@@ -36,7 +36,7 @@ export function Stat({
       <span className={cn("flex size-10 items-center justify-center rounded-xl [&_svg]:size-5", TONES[tone])}>{icon}</span>
       <div className="mt-3 text-sm text-muted-foreground">{label}</div>
       <div className="text-xl font-semibold tracking-tight tabular-nums sm:text-2xl">{value}</div>
-      <div className={cn("mt-0.5 truncate text-xs", accent ? "font-medium text-amber-700" : "text-muted-foreground")}>{sub}</div>
+      <div className={cn("mt-0.5 truncate text-xs", accent ? "font-medium text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>{sub}</div>
     </Link>
   )
 }

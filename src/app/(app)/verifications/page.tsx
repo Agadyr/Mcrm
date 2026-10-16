@@ -121,7 +121,7 @@ function Who({ v, view, compact }: { v: VerificationListItem; view: View; compac
   }
   if (!v.verifier) {
     return (
-      <Link href={`/verifications/${v.id}`} className="inline-flex items-center gap-1.5 text-sm font-medium text-amber-700 hover:underline">
+      <Link href={`/verifications/${v.id}`} className="inline-flex items-center gap-1.5 text-sm font-medium text-amber-700 dark:text-amber-400 hover:underline">
         <UserSearchIcon className="size-4" /> Выбрать человека
       </Link>
     )
@@ -169,7 +169,7 @@ function Money({ v, view, align = "right", compact }: { v: VerificationListItem;
         {compact ? null : view.isOwner ? (
           v.agentFee > 0 && <AgentPaidToggle id={v.id} paid={v.agentPaid} label="клиент оплатил" />
         ) : (
-          <span className={cn("text-xs", v.agentPaid ? "text-emerald-700" : "text-amber-700")}>
+          <span className={cn("text-xs", v.agentPaid ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")}>
             {v.agentPaid ? "компания оплатила" : "компания не оплатила"}
           </span>
         )}
@@ -177,7 +177,7 @@ function Money({ v, view, align = "right", compact }: { v: VerificationListItem;
           Человеку <b className="font-medium text-foreground tabular-nums">{v.payment ? formatMoney(v.payment) : "—"}</b>
         </span>
         {!compact && v.payment > 0 && <PaidToggle id={v.id} isPaid={v.isPaid} />}
-        <span className={cn("text-xs font-semibold tabular-nums", profit < 0 ? "text-destructive" : "text-emerald-700")}>прибыль {formatMoney(profit)}</span>
+        <span className={cn("text-xs font-semibold tabular-nums", profit < 0 ? "text-destructive" : "text-emerald-700 dark:text-emerald-400")}>прибыль {formatMoney(profit)}</span>
       </div>
     )
   }

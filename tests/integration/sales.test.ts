@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { prisma } from "@/lib/db"
-import { sellPhoneAction } from "@/server/actions/phones"
+import { cancelSaleAction, sellPhoneAction } from "@/server/actions/phones"
 import { addSalePaymentAction, deleteSalePaymentAction, updateSaleInfoAction } from "@/server/actions/sales"
 import { createPhone, createUser, loginAs, saleForm } from "../support/factories"
 
@@ -45,6 +45,40 @@ describe("оплата долга", () => {
     const { sale } = await debtSale()
     const r = await addSalePaymentAction(sale.id, payment("400 001"))
     expect(r).toMatchObject({ ok: false, fieldErrors: { amount: "Долг всего 400 000 ₸" } })
+  })
+
+  it("две одновременные оплаты не переплачивают долг", async () => {
+    const { sale } = await debtSale()
+    // долг 400 000: каждая по отдельности проходит, вместе — нет
+    const results = await Promise.all([
+      addSalePaymentAction(sale.id, payment("300000")),
+      addSalePaymentAction(sale.id, payment("300000")),
+    ])
+    expect(results.filter((r) => r.ok)).toHaveLength(1)
+    expect(results.find((r) => !r.ok)).toMatchObject({ ok: false, error: "Сумма больше остатка долга" })
+
+    const s = await prisma.sale.findUniqueOrThrow({ where: { id: sale.id } })
+    expect(s.paidAmount).toBe(400_000)
+    expect(await prisma.salePayment.count({ where: { saleId: sale.id } })).toBe(2)
+    expect(await prisma.phoneEvent.count({ where: { type: "SALE_PAYMENT" } })).toBe(1)
+  })
+
+  it("одновременные оплаты, которые вместе укладываются в долг, проходят обе", async () => {
+    const { sale } = await debtSale()
+    const results = await Promise.all([
+      addSalePaymentAction(sale.id, payment("150000")),
+      addSalePaymentAction(sale.id, payment("250000")),
+    ])
+    expect(results.every((r) => r.ok)).toBe(true)
+    expect((await prisma.sale.findUniqueOrThrow({ where: { id: sale.id } })).paidAmount).toBe(500_000)
+    const events = await prisma.phoneEvent.findMany({ where: { type: "SALE_PAYMENT" } })
+    expect(events.filter((e) => e.message.includes("Долг закрыт"))).toHaveLength(1)
+  })
+
+  it("по отменённой продаже оплату не принимает", async () => {
+    const { sale, phone } = await debtSale()
+    await cancelSaleAction(phone.id)
+    expect(await addSalePaymentAction(sale.id, payment("1000"))).toEqual({ ok: false, error: "Продажа отменена" })
   })
 
   it("удалённая оплата возвращает долг", async () => {

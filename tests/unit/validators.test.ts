@@ -95,8 +95,8 @@ describe("saleSchema", () => {
 
 describe("пользователи", () => {
   it("логин: латиница, приводится к нижнему регистру", () => {
-    expect(createUserSchema.parse({ login: " Shop_1 ", password: "secret1", role: "USER" }).login).toBe("shop_1")
-    expect(createUserSchema.safeParse({ login: "магазин", password: "secret1", role: "USER" }).success).toBe(false)
+    expect(createUserSchema.parse({ login: " Shop_1 ", password: "secret12", role: "USER" }).login).toBe("shop_1")
+    expect(createUserSchema.safeParse({ login: "магазин", password: "secret12", role: "USER" }).success).toBe(false)
   })
 
   it("телефон в профиле", () => {
@@ -104,8 +104,13 @@ describe("пользователи", () => {
     expect(profileSchema.safeParse({ companyName: "", name: "Айдос", phone: "12345" }).success).toBe(false)
   })
 
+  it("пароль — минимум 8 символов", () => {
+    expect(createUserSchema.safeParse({ login: "shop", password: "1234567", role: "USER" }).success).toBe(false)
+    expect(createUserSchema.safeParse({ login: "shop", password: "12345678", role: "USER" }).success).toBe(true)
+  })
+
   it("пароли при регистрации должны совпадать", () => {
-    const r = verifierSignupSchema.safeParse({ name: "Айдос", phone: "87011234567", login: "aidos", password: "secret1", confirmPassword: "secret2" })
+    const r = verifierSignupSchema.safeParse({ name: "Айдос", phone: "87011234567", login: "aidos", password: "secret12", confirmPassword: "secret21" })
     expect(r.success).toBe(false)
   })
 

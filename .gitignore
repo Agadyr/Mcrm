@@ -27,3 +27,6 @@ certificates/
 # не относится к CRM (наборы инструкций для Claude)
 academic-pptx/
 context-builder/
+
+# служебные файлы Claude Code (копии проекта агентов)
+.claude/

@@ -13,7 +13,7 @@ export const profileSchema = z.object({
 })
 export type ProfileInput = z.input<typeof profileSchema>
 
-export const newPasswordSchema = z.string().min(6, "Минимум 6 символов").max(100)
+export const newPasswordSchema = z.string().min(8, "Минимум 8 символов").max(100)
 
 export const createUserSchema = z.object({
   login: z

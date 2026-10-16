@@ -29,8 +29,8 @@ model User {
   phone            String?
   sessionVersion   Int       @default(0) // увеличивается при смене пароля/блокировке — старые сессии перестают работать
   lastLoginAt      DateTime?
-  failedLogins     Int       @default(0) // неверные пароли подряд
-  lockedUntil      DateTime? // после 5 неверных паролей вход закрыт на 15 минут
+  failedLogins     Int       @default(0) // не используется: подбор пароля ограничивается по паре IP + логин (RateLimit)
+  lockedUntil      DateTime? // не используется, см. RateLimit
   telegramChatId   String? // куда слать уведомления
   telegramLinkCode String?   @unique // одноразовый код для привязки через t.me/бот?start=код
   telegramLinkedAt DateTime?
@@ -46,6 +46,10 @@ model User {
   kaspiShop          KaspiShop?
   kaspiOrders        KaspiOrder[]
   kaspiOffers        KaspiOffer[]
+  customers          Customer[]
+
+  morningReminder Boolean   @default(true) // утреннее напоминание в Telegram: просроченные долги и долгие верификации
+  lastReminderAt  DateTime? // когда последний раз отправили напоминание — не больше одного в день (по Алматы)
 }
 
 // ───────── Товары ─────────
@@ -103,6 +107,9 @@ model Phone {
   @@index([ownerId, receivedAt])
   @@index([serialNumber])
   @@index([imei2])
+  // поиск по части IMEI (contains → LIKE '%…%'); расширение pg_trgm создаёт миграция imei_trigram_search
+  @@index([imei1(ops: raw("gin_trgm_ops"))], type: Gin, map: "Phone_imei1_trgm_idx")
+  @@index([imei2(ops: raw("gin_trgm_ops"))], type: Gin, map: "Phone_imei2_trgm_idx")
 }
 
 enum PaymentMethod {
@@ -130,15 +137,26 @@ model Sale {
   cancelledAt   DateTime?
   createdAt     DateTime      @default(now())
 
-  payments   SalePayment[]
-  kaspiOrder KaspiOrder?
+  payments SalePayment[]
+
+  // продажа по заказу Kaspi: в заказе может быть несколько телефонов — по продаже на каждый
+  kaspiOrderId String?
+  kaspiOrder   KaspiOrder? @relation(fields: [kaspiOrderId], references: [id], onDelete: SetNull)
+  kaspiEntryId String? // позиция заказа Kaspi, в которую уходит IMEI этого телефона
+
+  customerId String? // клиент из базы; buyerName/buyerPhone остаются как снимок на момент продажи
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
 
   @@index([soldAt])
   @@index([phoneId, cancelledAt])
   @@index([buyerName])
+  @@index([customerId])
+  @@index([kaspiOrderId])
 }
 
-/** Оплата по продаже: первая — при продаже, следующие — когда покупатель возвращает долг */
+/**
+ * Оплата по продаже: первая — при продаже, следующие — когда покупатель возвращает долг
+ */
 model SalePayment {
   id        String        @id @default(cuid())
   saleId    String
@@ -260,7 +278,9 @@ model PhoneEvent {
 
 // ─── Kaspi магазин ───────────────────────────────────────────────
 
-/** Подключение магазина на Kaspi.kz: токен API из кабинета продавца (зашифрован ключом из AUTH_SECRET) */
+/**
+ * Подключение магазина на Kaspi.kz: токен API из кабинета продавца (зашифрован ключом из AUTH_SECRET)
+ */
 model KaspiShop {
   id            String    @id @default(cuid())
   ownerId       String    @unique
@@ -279,9 +299,12 @@ model KaspiShop {
   storeId       String? // код пункта самовывоза (склада) в Kaspi, например PP1
   feedToken     String?   @unique // секрет в ссылке на прайс-лист, по которой Kaspi забирает цены и остатки
   updatedAt     DateTime  @updatedAt
+  syncStartedAt DateTime? // идёт синхронизация: захват, чтобы два запуска не обрабатывали заказы одновременно
 }
 
-/** Товар в прайс-листе Kaspi. Остаток считается по складу CRM: телефоны «В наличии» с этой моделью (памятью, цветом) */
+/**
+ * Товар в прайс-листе Kaspi. Остаток считается по складу CRM: телефоны «В наличии» с этой моделью (памятью, цветом)
+ */
 model KaspiOffer {
   id           String   @id @default(cuid())
   ownerId      String
@@ -301,7 +324,9 @@ model KaspiOffer {
   @@unique([ownerId, sku])
 }
 
-/** Заказ из Kaspi магазина (копия для CRM, обновляется синхронизацией) */
+/**
+ * Заказ из Kaspi магазина (копия для CRM, обновляется синхронизацией)
+ */
 model KaspiOrder {
   id                String    @id @default(cuid())
   ownerId           String
@@ -324,12 +349,45 @@ model KaspiOrder {
   imeiSentAt        DateTime? // когда IMEI отправлены в Kaspi
   waybill           String? // ссылка на накладную Kaspi Доставки
   waybillNumber     String?
-  saleId            String?   @unique // продажа в CRM, оформленная по этому заказу
-  sale              Sale?     @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  assembled         Boolean   @default(false) // передан в Kaspi Доставку (собран, накладная формируется)
+  courierAt         DateTime? // когда курьер Kaspi заберёт заказ
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  sales             Sale[] // продажи в CRM по этому заказу — по одной на каждый телефон
 
   @@unique([ownerId, kaspiId])
   @@index([ownerId, state])
   @@index([ownerId, orderedAt])
+}
+
+/// Счётчик попыток против подбора пароля и спама: вход — по паре «IP + логин», регистрация верификатора — по IP
+model RateLimit {
+  key          String    @id // "login:<ip>:<логин>" или "signup:<ip>"
+  count        Int       @default(0) // попыток в текущем окне
+  windowStart  DateTime  @default(now())
+  blockedUntil DateTime? // до этого времени попытки отклоняются
+
+  @@index([windowStart])
+}
+
+// ─── Клиенты ─────────────────────────────────────────────────────
+
+/**
+ * Покупатель магазина. Находится по телефону (+7XXXXXXXXXX) при каждой продаже — так видно все его покупки и долги
+ */
+model Customer {
+  id        String   @id @default(cuid())
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name      String
+  phone     String? // всегда в виде +7XXXXXXXXXX
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sales Sale[]
+
+  // один клиент на номер в пределах магазина (клиентов без номера может быть сколько угодно)
+  @@unique([ownerId, phone])
+  @@index([ownerId, name])
 }

@@ -7,6 +7,7 @@ import { toast } from "sonner"
 import {
   BanknoteIcon,
   CheckIcon,
+  ExternalLinkIcon,
   FileTextIcon,
   Loader2Icon,
   MapPinIcon,
@@ -27,6 +28,7 @@ import { KaspiMark } from "@/components/kaspi-mark"
 import { KaspiTabs } from "./kaspi-tabs"
 import { formatDateTime, formatMemory, formatMoney } from "@/lib/format"
 import { KASPI_CANCEL_REASONS, KASPI_DELIVERY, KASPI_PAYMENT, kaspiStatus, type KaspiCancelReason, type KaspiTab } from "@/lib/kaspi-labels"
+import { entryQuantity, entryTotal, phoneEntries } from "@/lib/kaspi-order"
 import { cn } from "@/lib/utils"
 import type { KaspiEntry } from "@/server/kaspi"
 import {
@@ -55,14 +57,19 @@ export type OrderRow = {
   address: string | null
   entries: KaspiEntry[]
   hasSale: boolean
+  /** телефоны из активных продаж по заказу */
+  soldPhones: { model: string; memoryGb: number | null; imei1: string }[]
   imeiRequired: boolean
   imeiSent: boolean
   waybill: string | null
   waybillNumber: string | null
+  assembled: boolean
+  courierAt: string | null
 }
 export type StockOption = { id: string; model: string; memoryGb: number | null; color: string | null; imei1: string; purchasePrice: number }
 type Shop = { name: string | null; ok: boolean; autoAccept: boolean; lastSyncAt: string | null; lastSyncError: string | null }
 
+const KASPI_CABINET = "https://kaspi.kz/mc/"
 const STALE_MS = 2 * 60_000
 
 /** Заказы Kaspi магазина: вкладки по этапам, действия по каждому заказу */
@@ -158,7 +165,9 @@ export function KaspiOrders({
         <span className="min-w-0">
           <span className="block text-sm font-semibold">Принимать новые заказы автоматически</span>
           <span className="block text-xs text-muted-foreground">
-            {auto ? "Новые заказы принимаются сами при обновлении — вы получите сообщение в Telegram." : "Новые заказы нужно принимать вручную кнопкой «Принять»."}
+            {auto
+              ? "Новый заказ принимается сам, если его товары есть в «Товарах и ценах» (по артикулу) и такие телефоны есть на складе. Остальные — вручную кнопкой «Принять»; в Telegram придёт сообщение."
+              : "Новые заказы нужно принимать вручную кнопкой «Принять»."}
           </span>
         </span>
       </button>
@@ -223,7 +232,7 @@ function OrderCard({ order: o, stock }: { order: OrderRow; stock: StockOption[] 
   // IMEI отправлен или не нужен — можно выдавать и передавать в доставку
   const imeiOk = !o.imeiRequired || o.imeiSent
   const canComplete = accepted && o.state !== "KASPI_DELIVERY" && o.state !== "NEW"
-  const canAssemble = accepted && o.state === "KASPI_DELIVERY" && !o.waybill
+  const canAssemble = accepted && o.state === "KASPI_DELIVERY" && !o.assembled
   const needImei = o.hasSale && !o.imeiSent && (o.imeiRequired || o.entries.some((e) => e.id))
 
   function resendImei() {
@@ -253,7 +262,7 @@ function OrderCard({ order: o, stock }: { order: OrderRow; stock: StockOption[] 
             <span className={cn("inline-flex h-6 items-center rounded-full px-2.5 text-xs font-semibold", TONE[st.tone])}>{st.label}</span>
             {o.hasSale && (
               <span className="inline-flex h-6 items-center gap-1 rounded-full bg-emerald-50 px-2.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-                <CheckIcon className="size-3.5" /> Продажа оформлена
+                <CheckIcon className="size-3.5" /> {o.soldPhones.length > 1 ? `Продажи оформлены · ${o.soldPhones.length} шт.` : "Продажа оформлена"}
               </span>
             )}
             {o.imeiSent ? (
@@ -296,6 +305,12 @@ function OrderCard({ order: o, stock }: { order: OrderRow; stock: StockOption[] 
           ))
         )}
       </ul>
+      {o.soldPhones.length > 0 && (
+        <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+          <SmartphoneIcon className="size-3.5" />
+          {o.soldPhones.map((p) => `${[p.model, formatMemory(p.memoryGb)].filter(Boolean).join(" ")} · IMEI …${p.imei1.slice(-4)}`).join(", ")}
+        </p>
+      )}
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 text-sm">
@@ -341,9 +356,16 @@ function OrderCard({ order: o, stock }: { order: OrderRow; stock: StockOption[] 
               <TruckIcon /> Передать в Kaspi Доставку
             </Button>
           )}
-          {o.waybill && (
-            <a href={o.waybill} target="_blank" rel="noopener noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg border bg-card px-3 text-sm font-medium shadow-xs hover:bg-muted">
-              <FileTextIcon className="size-4" /> Накладная{o.waybillNumber ? ` №${o.waybillNumber}` : ""}
+          {o.assembled && (
+            <a
+              href={o.waybill ?? KASPI_CABINET}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={o.waybill ? "Открыть накладную" : "Kaspi не отдаёт файл накладной по API — распечатайте её в кабинете продавца"}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border bg-card px-3 text-sm font-medium shadow-xs hover:bg-muted"
+            >
+              <FileTextIcon className="size-4" /> {o.waybillNumber ? `Накладная №${o.waybillNumber}` : "Накладная"}
+              {!o.waybill && <ExternalLinkIcon className="size-3.5 text-muted-foreground" />}
             </a>
           )}
           {canCancel && (
@@ -354,6 +376,17 @@ function OrderCard({ order: o, stock }: { order: OrderRow; stock: StockOption[] 
         </div>
       </div>
 
+      {o.assembled && o.status === "ACCEPTED_BY_MERCHANT" && (
+        <div className="mt-3 flex items-center gap-2 rounded-xl bg-sky-50 px-3 py-2.5 text-sm text-sky-800 dark:bg-sky-950/50 dark:text-sky-200">
+          <TruckIcon className="size-4 shrink-0" />
+          <span>
+            Передан в Kaspi Доставку
+            {o.waybillNumber ? ` · накладная №${o.waybillNumber}` : " · Kaspi формирует накладную"}
+            {o.courierAt && ` · передача курьеру ${formatDateTime(new Date(o.courierAt))}`}
+          </span>
+        </div>
+      )}
+
       {saleOpen && <SaleDialog order={o} stock={stock} onClose={() => setSaleOpen(false)} />}
       {cancelOpen && <CancelDialog order={o} onClose={() => setCancelOpen(false)} />}
       {completeOpen && <CompleteDialog order={o} onClose={() => setCompleteOpen(false)} />}
@@ -362,22 +395,47 @@ function OrderCard({ order: o, stock }: { order: OrderRow; stock: StockOption[] 
   )
 }
 
-/** Выбор телефона со склада: подходящие по названию заказа — первыми */
+/** Выбор телефонов со склада: на каждую штуку позиции — свой телефон; подходящие по названию позиции — первыми */
 function SaleDialog({ order, stock, onClose }: { order: OrderRow; stock: StockOption[]; onClose: () => void }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
-  const title = order.entries.map((e) => e.name.toLowerCase()).join(" ")
-  const matches = (p: StockOption) => title.includes(p.model.toLowerCase())
-  const sorted = [...stock].sort((a, b) => Number(matches(b)) - Number(matches(a)))
-  const [phoneId, setPhoneId] = useState(sorted.find(matches)?.id ?? "")
-  const phone = stock.find((p) => p.id === phoneId)
+  const entries = phoneEntries(order.entries, order.imeiRequired)
+  const noEntryId = entries.length === 0 || order.entries.some((e) => e.imeiRequired && !e.id)
+  const matches = (e: KaspiEntry, p: StockOption) => e.name.toLowerCase().includes(p.model.trim().toLowerCase())
+  const sortedFor = (e: KaspiEntry) => [...stock].sort((a, b) => Number(matches(e, b)) - Number(matches(e, a)))
+
+  // сразу подставляем подходящие телефоны — каждый не больше одного раза
+  const [picks, setPicks] = useState<Record<string, string[]>>(() => {
+    const used = new Set<string>()
+    return Object.fromEntries(
+      entries.map((e) => [
+        e.id,
+        Array.from({ length: entryQuantity(e) }, () => {
+          const p = stock.find((p) => matches(e, p) && !used.has(p.id))
+          if (!p) return ""
+          used.add(p.id)
+          return p.id
+        }),
+      ])
+    )
+  })
+  const chosen = Object.values(picks).flat().filter(Boolean)
+  const complete = !noEntryId && entries.every((e) => (picks[e.id] ?? []).filter(Boolean).length === entryQuantity(e))
+  const salesTotal = entries.reduce((a, e) => a + (entryTotal(e) || (entries.length === 1 ? order.totalPrice : 0)), 0)
+  const purchase = chosen.reduce((a, id) => a + (stock.find((p) => p.id === id)?.purchasePrice ?? 0), 0)
+  const units = entries.reduce((a, e) => a + entryQuantity(e), 0)
+
+  function pick(entryId: string, slot: number, phoneId: string) {
+    setPicks((s) => ({ ...s, [entryId]: s[entryId].map((v, i) => (i === slot ? phoneId : v)) }))
+  }
 
   function submit() {
     startTransition(async () => {
-      const r = await createSaleFromKaspiOrderAction(order.id, phoneId)
+      const r = await createSaleFromKaspiOrderAction(order.id, picks)
       if (!r.ok) return void toast.error(r.error)
-      if (r.data.imei.ok) toast.success("Продажа оформлена, IMEI отправлены в Kaspi")
-      else toast.warning(`Продажа оформлена, но IMEI не ушли в Kaspi: ${r.data.imei.error}. Нажмите «Отправить IMEI».`, { duration: 8000 })
+      const what = r.data.saleIds.length > 1 ? `Оформлено продаж: ${r.data.saleIds.length}` : "Продажа оформлена"
+      if (r.data.imei.ok) toast.success(`${what}, IMEI отправлены в Kaspi`)
+      else toast.warning(`${what}, но IMEI не ушли в Kaspi: ${r.data.imei.error}. Нажмите «Отправить IMEI».`, { duration: 8000 })
       onClose()
       router.refresh()
     })
@@ -385,43 +443,71 @@ function SaleDialog({ order, stock, onClose }: { order: OrderRow; stock: StockOp
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Оформить продажу по заказу №{order.code}</DialogTitle>
-          <DialogDescription>Выберите телефон со склада, который отправляете покупателю. Продажа создастся как обычно: Kaspi, {formatMoney(order.totalPrice)}. IMEI1 и IMEI2 телефона сразу уйдут в Kaspi — с 25.05.2025 это обязательно.</DialogDescription>
+          <DialogDescription>
+            {units > 1
+              ? `Телефонов в заказе: ${units}. Выберите со склада свой телефон на каждую штуку. Создастся продажа на каждый телефон (Kaspi, цена позиции делится поровну).`
+              : `Выберите телефон со склада, который отправляете покупателю. Продажа создастся как обычно: Kaspi, ${formatMoney(salesTotal)}.`}{" "}
+            IMEI1 и IMEI2 телефонов сразу уйдут в Kaspi — с 25.05.2025 это обязательно.
+          </DialogDescription>
         </DialogHeader>
-        {stock.length === 0 ? (
+        {noEntryId ? (
+          <p className="rounded-xl bg-muted/60 p-4 text-sm text-muted-foreground">Kaspi не прислал состав заказа — нажмите «Обновить» и попробуйте снова.</p>
+        ) : stock.length === 0 ? (
           <p className="rounded-xl bg-muted/60 p-4 text-sm text-muted-foreground">На складе нет телефонов в наличии. Сначала добавьте телефон в «Товарах».</p>
         ) : (
-          <>
-            <select
-              value={phoneId}
-              onChange={(e) => setPhoneId(e.target.value)}
-              aria-label="Телефон со склада"
-              className="h-11 w-full rounded-xl border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-            >
-              <option value="">Выберите телефон…</option>
-              {sorted.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {matches(p) ? "★ " : ""}
-                  {[p.model, formatMemory(p.memoryGb), p.color].filter(Boolean).join(" · ")} · …{p.imei1.slice(-4)}
-                </option>
-              ))}
-            </select>
-            {phone && (
-              <p className="text-sm text-muted-foreground">
-                Закупка {formatMoney(phone.purchasePrice)} · прибыль{" "}
-                <b className={cn("tabular-nums", order.totalPrice - phone.purchasePrice < 0 ? "text-destructive" : "text-emerald-700")}>{formatMoney(order.totalPrice - phone.purchasePrice)}</b>
-              </p>
+          <div className="flex max-h-[55vh] flex-col gap-4 overflow-y-auto">
+            {entries.map((e) => {
+              const sorted = sortedFor(e)
+              const slots = picks[e.id] ?? []
+              return (
+                <fieldset key={e.id} className="flex flex-col gap-2">
+                  <legend className="mb-1 flex w-full items-center gap-2 text-sm font-medium">
+                    <span className="min-w-0 flex-1">{e.name}</span>
+                    {slots.length > 1 && <span className="text-muted-foreground tabular-nums">× {slots.length}</span>}
+                  </legend>
+                  {slots.map((value, slot) => (
+                    <select
+                      key={slot}
+                      value={value}
+                      onChange={(ev) => pick(e.id, slot, ev.target.value)}
+                      aria-label={slots.length > 1 ? `${e.name}: телефон ${slot + 1}` : "Телефон со склада"}
+                      className="h-11 w-full rounded-xl border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                    >
+                      <option value="">{slots.length > 1 ? `Телефон ${slot + 1} из ${slots.length}…` : "Выберите телефон…"}</option>
+                      {sorted.map((p) => (
+                        // телефон, выбранный на другую штуку, второй раз не выбрать
+                        <option key={p.id} value={p.id} disabled={p.id !== value && chosen.includes(p.id)}>
+                          {matches(e, p) ? "★ " : ""}
+                          {[p.model, formatMemory(p.memoryGb), p.color].filter(Boolean).join(" · ")} · …{p.imei1.slice(-4)}
+                        </option>
+                      ))}
+                    </select>
+                  ))}
+                </fieldset>
+              )
+            })}
+          </div>
+        )}
+        {chosen.length > 0 && (
+          <p className="text-sm text-muted-foreground">
+            Закупка {formatMoney(purchase)}
+            {complete && (
+              <>
+                {" "}
+                · прибыль <b className={cn("tabular-nums", salesTotal - purchase < 0 ? "text-destructive" : "text-emerald-700")}>{formatMoney(salesTotal - purchase)}</b>
+              </>
             )}
-          </>
+          </p>
         )}
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={pending}>
             Закрыть
           </Button>
-          <Button onClick={submit} disabled={pending || !phoneId}>
-            {pending && <Loader2Icon className="animate-spin" />} Оформить продажу
+          <Button onClick={submit} disabled={pending || !complete}>
+            {pending && <Loader2Icon className="animate-spin" />} {units > 1 ? `Оформить продажи (${units})` : "Оформить продажу"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -559,7 +645,7 @@ function AssembleDialog({ order, onClose }: { order: OrderRow; onClose: () => vo
     startTransition(async () => {
       const r = await assembleKaspiOrderAction(order.id, places)
       if (!r.ok) return void toast.error(r.error)
-      toast.success("Заказ передан в Kaspi Доставку — накладная появится в заказе")
+      toast.success("Заказ передан в Kaspi Доставку", { description: r.data.waybillNumber ? `Накладная №${r.data.waybillNumber}` : "Kaspi формирует накладную — номер появится в заказе" })
       onClose()
       router.refresh()
     })

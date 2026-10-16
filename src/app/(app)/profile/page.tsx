@@ -1,16 +1,20 @@
 import type { Metadata } from "next"
-import { BellRingIcon, BuildingIcon, KeyRoundIcon, PhoneIcon, UserRoundPenIcon } from "lucide-react"
+import { BellRingIcon, BuildingIcon, KeyRoundIcon, LogOutIcon, PaletteIcon, PhoneIcon, UserRoundPenIcon } from "lucide-react"
 import { TelegramCard } from "@/components/telegram-card"
 import { isTelegramConfigured } from "@/lib/telegram"
 import { requireUser } from "@/lib/auth"
 import { prisma } from "@/lib/db"
 import { formatDate } from "@/lib/format"
+import { instantToDate } from "@/lib/dates"
 import { ACTIVE_VERIFICATION_STATUSES } from "@/lib/labels"
 import { PageHeader } from "@/components/page-header"
 import { FormSection } from "@/components/form-section"
 import { ProfileForm } from "@/components/profile-form"
 import { ChangePasswordForm } from "@/components/change-password-form"
+import { ThemeSwitch } from "@/components/theme-switch"
 import { RoleBadge, UserAvatar } from "@/components/user-avatar"
+import { Button } from "@/components/ui/button"
+import { logoutEverywhereAction } from "@/server/actions/auth"
 
 export const metadata: Metadata = { title: "Профиль" }
 
@@ -24,7 +28,7 @@ export default async function ProfilePage() {
       prisma.verification.count({ where: { agentId: user.id, status: "VERIFIED" } }),
       prisma.verification.count({ where: { agentId: user.id, status: { in: ACTIVE_VERIFICATION_STATUSES } } }),
     ]),
-    prisma.user.findUnique({ where: { id: user.id }, select: { createdAt: true, telegramLinkedAt: true, telegramChatId: true } }),
+    prisma.user.findUnique({ where: { id: user.id }, select: { createdAt: true, telegramLinkedAt: true, telegramChatId: true, morningReminder: true } }),
   ])
 
   return (
@@ -76,7 +80,7 @@ export default async function ProfilePage() {
                 <span className="text-muted-foreground">телефон не указан</span>
               )}
             </span>
-            {created && <span className="text-muted-foreground">В системе с {formatDate(created.createdAt)}</span>}
+            {created && <span className="text-muted-foreground">В системе с {formatDate(instantToDate(created.createdAt))}</span>}
           </div>
         </div>
       </section>
@@ -88,9 +92,24 @@ export default async function ProfilePage() {
             defaultValues={{ companyName: user.companyName ?? "", name: user.name ?? "", phone: user.phone ?? "" }}
           />
         </FormSection>
-        <FormSection title="Пароль" description="После смены на других устройствах нужно будет войти заново" icon={<KeyRoundIcon />}>
+        <FormSection
+          title="Пароль"
+          description="После смены на других устройствах нужно будет войти заново, Telegram отвяжется"
+          icon={<KeyRoundIcon />}
+        >
           <ChangePasswordForm />
+          {/* если телефон потерян или вход был с чужого компьютера */}
+          <form action={logoutEverywhereAction} className="mt-4 border-t pt-4">
+            <Button type="submit" variant="outline" className="w-full sm:w-auto">
+              <LogOutIcon /> Выйти на всех устройствах
+            </Button>
+          </form>
         </FormSection>
+        <div id="theme" className="lg:col-span-2">
+          <FormSection title="Оформление" description="Тема сохраняется в этом браузере" icon={<PaletteIcon />}>
+            <ThemeSwitch />
+          </FormSection>
+        </div>
         <div id="telegram" className="lg:col-span-2">
           <FormSection title="Уведомления в Telegram" description="Чтобы узнавать о событиях, не открывая сайт" icon={<BellRingIcon />}>
             <TelegramCard
@@ -98,6 +117,7 @@ export default async function ProfilePage() {
               linkedAt={created?.telegramChatId ? (created.telegramLinkedAt ?? new Date()) : null}
               isAdmin={user.role === "ADMIN"}
               role={user.role}
+              morningReminder={created?.morningReminder ?? true}
             />
           </FormSection>
         </div>

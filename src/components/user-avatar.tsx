@@ -53,7 +53,7 @@ export function RoleBadge({ role }: { role: UserRole }) {
     <span
       className={cn(
         "inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-xs font-medium",
-        role === "ADMIN" ? "bg-secondary text-secondary-foreground" : "bg-amber-50 text-amber-700"
+        role === "ADMIN" ? "bg-secondary text-secondary-foreground" : "bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
       )}
     >
       {role === "ADMIN" ? <ShieldIcon className="size-3" /> : <BriefcaseIcon className="size-3" />}

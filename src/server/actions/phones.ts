@@ -9,10 +9,11 @@ import { formatDate, formatMemory, formatMoney } from "@/lib/format"
 import { normalizeImei } from "@/lib/imei"
 import { PAYMENT_METHOD_LABEL, PHONE_CONDITION_LABEL, PHONE_STATUS_LABEL, RFS_STATUS_LABEL } from "@/lib/labels"
 import { fieldErrorsOf, type ActionResult } from "@/lib/validators/common"
-import { phoneSchema, saleSchema, type PhoneData } from "@/lib/validators/phone"
+import { bulkPhoneStatusSchema, manualStatusError, phoneSchema, saleSchema, type PhoneData } from "@/lib/validators/phone"
 import { phoneAccessWhere } from "@/server/access"
 import { logEvent } from "@/server/history"
 import { conflictMessage, findImeiConflicts, type ImeiConflict } from "@/server/imei-conflicts"
+import { findOrCreateCustomer } from "@/server/customers"
 import { saleCreateData } from "@/server/sale-data"
 import { syncPhoneWithVerifications } from "@/server/verification-sync"
 
@@ -115,8 +116,9 @@ export async function updatePhoneAction(id: string, input: unknown): Promise<Act
   if (!phone) return { ok: false, error: "Телефон не найден" }
   // статус проданного меняется только отменой продажи, а «Продан» — только кнопкой «Продать»
   if (phone.status === "SOLD") d.status = "SOLD"
-  else if (d.status === "SOLD") {
-    return { ok: false, error: "«Продан» ставится кнопкой «Продать»", fieldErrors: { status: "Выберите другой статус" } }
+  else {
+    const statusError = manualStatusError(phone.status, d.status)
+    if (statusError) return { ok: false, error: statusError, fieldErrors: { status: "Выберите другой статус" } }
   }
 
   const fieldErrors = await imeiErrors(d, user.id, id)
@@ -165,7 +167,9 @@ export async function sellPhoneAction(id: string, input: unknown): Promise<Actio
     (debt > 0 ? `. В долг: ${formatMoney(debt)}${data.dueDate ? ` до ${formatDate(data.dueDate)}` : ""}` : "")
 
   const sale = await prisma.$transaction(async (tx) => {
-    const sale = await tx.sale.create({ data: { ...data, phoneId: id }, select: { id: true } })
+    // покупатель с номером попадает в базу клиентов (или находится там)
+    const customerId = await findOrCreateCustomer(tx, user.id, d.buyerName, d.buyerPhone)
+    const sale = await tx.sale.create({ data: { ...data, phoneId: id, customerId }, select: { id: true } })
     await tx.phone.update({ where: { id }, data: { status: "SOLD" } })
     await logEvent(tx, id, "SOLD", message, user.id)
     return sale
@@ -202,12 +206,49 @@ export async function cancelSaleAction(phoneId: string): Promise<ActionResult> {
   return { ok: true, data: undefined }
 }
 
-/** Удаляет телефон с историей и продажами. Верификации остаются без связи с товаром. */
+/**
+ * Массовая смена статуса из списка товаров. Правила те же, что в форме телефона: «Продан» не ставится,
+ * проданные пропускаются. Все телефоны должны быть свои — иначе ничего не меняем.
+ */
+export async function bulkSetPhoneStatusAction(input: unknown): Promise<ActionResult<{ changed: number; skipped: number }>> {
+  const user = await requireUser()
+  if (user.role === "VERIFIER") return NO_STOCK
+  const parsed = bulkPhoneStatusSchema.safeParse(input)
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Проверьте выбор" }
+  const status = parsed.data.status
+  const ids = [...new Set(parsed.data.ids)]
+
+  const phones = await prisma.phone.findMany({ where: { id: { in: ids }, ownerId: user.id }, select: { id: true, status: true } })
+  if (phones.length !== ids.length) return { ok: false, error: "Некоторые телефоны не найдены. Обновите страницу." }
+
+  const allowed = phones.filter((p) => !manualStatusError(p.status, status))
+  const toChange = allowed.filter((p) => p.status !== status)
+  if (toChange.length) {
+    await prisma.$transaction(async (tx) => {
+      for (const p of toChange) {
+        await tx.phone.update({ where: { id: p.id }, data: { status } })
+        await logEvent(tx, p.id, "STATUS_CHANGED", `Статус: ${PHONE_STATUS_LABEL[p.status]} → ${PHONE_STATUS_LABEL[status]}`, user.id)
+        await syncPhoneWithVerifications(tx, p.id, user.id)
+      }
+    }, { timeout: 30_000 }) // до 200 телефонов по очереди — дольше стандартных 5 секунд
+    refresh()
+  }
+  return { ok: true, data: { changed: toChange.length, skipped: phones.length - allowed.length } }
+}
+
+/** Удаляет телефон с историей и отменёнными продажами. Верификации остаются без связи с товаром.
+ *  Проданный (есть активная продажа) удалить нельзя: пропали бы выручка и долг покупателя. */
 export async function deletePhoneAction(id: string): Promise<ActionResult> {
   const user = await requireUser()
   if (user.role === "VERIFIER") return NO_STOCK
-  const { count } = await prisma.phone.deleteMany({ where: { id, ownerId: user.id } })
-  if (!count) return { ok: false, error: "Телефон не найден" }
+  // проверка продажи — в том же запросе: продажа, оформленная параллельно, удалить не даст
+  const { count } = await prisma.phone.deleteMany({
+    where: { id, ownerId: user.id, sales: { none: { cancelledAt: null } } },
+  })
+  if (!count) {
+    const phone = await findOwnPhone(id, user.id)
+    return { ok: false, error: phone ? "Телефон продан — сначала отмените продажу" : "Телефон не найден" }
+  }
   refresh()
   return { ok: true, data: undefined }
 }

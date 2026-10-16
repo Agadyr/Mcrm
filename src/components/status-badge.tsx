@@ -49,7 +49,7 @@ export function VerificationStatusBadge({
 /** Значок «верифицирован» у товара */
 export function VerifiedMark({ className }: { className?: string }) {
   return (
-    <span title="Верифицирован" className={cn(base, "bg-emerald-50 px-2 text-emerald-700", className)}>
+    <span title="Верифицирован" className={cn(base, "bg-emerald-50 px-2 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300", className)}>
       <BadgeCheckIcon className="size-3.5" />
       Верифицирован
     </span>

@@ -1,6 +1,7 @@
 "use server"
 
 import { saleCreateData } from "@/server/sale-data"
+import { findOrCreateCustomer } from "@/server/customers"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { prisma } from "@/lib/db"
@@ -92,7 +93,16 @@ export async function commitImportAction(input: unknown): Promise<ActionResult<I
                     userId: user.id,
                   },
                 },
-                ...(c.sale ? { sales: { create: saleCreateData(c.sale) } } : {}),
+                ...(c.sale
+                  ? {
+                      sales: {
+                        create: {
+                          ...saleCreateData(c.sale),
+                          customerId: await findOrCreateCustomer(tx, user.id, c.sale.buyerName, c.sale.buyerPhone),
+                        },
+                      },
+                    }
+                  : {}),
               },
             })
           }

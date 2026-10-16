@@ -6,6 +6,7 @@ import { useState } from "react"
 import {
   BanknoteIcon,
   ChartNoAxesCombinedIcon,
+  ContactRoundIcon,
   FileSpreadsheetIcon,
   HandCoinsIcon,
   LayoutDashboardIcon,
@@ -51,6 +52,8 @@ const MAIN: NavItem[] = [
   { href: "/verifications", label: "Верификация телефонов", short: "Верификация", icon: ShieldCheckIcon },
   { href: "/verifiers", label: "Верификаторы", icon: UsersIcon },
   { href: "/analytics", label: "Аналитика", icon: ChartNoAxesCombinedIcon },
+  // в конце списка: на телефоне попадает в меню профиля, нижняя панель не меняется
+  { href: "/customers", label: "Клиенты", icon: ContactRoundIcon },
 ]
 const EXTRA: NavItem[] = [
   { href: "/phones/import", label: "Импорт из Excel", icon: FileSpreadsheetIcon },
@@ -73,10 +76,16 @@ function mainItems(user: NavUser) {
   return user.isVerifier ? VERIFIER_MAIN : MAIN
 }
 
-/** Справа от «+» на телефоне: у компании — Продажи и Верификация, у верификатора — Люди */
+/** Kaspi магазин подключён — на телефоне он во вкладках снизу вместо «Верификации» */
+function kaspiInTabBar(user: NavUser) {
+  return !user.isVerifier && (user.kaspi === "active" || user.kaspi === "invalid")
+}
+
+/** Справа от «+» на телефоне: у компании — Продажи и Верификация (или Kaspi), у верификатора — Люди */
 function tabBarRight(user: NavUser) {
   const main = mainItems(user)
-  return user.isVerifier ? main.slice(2, 3) : main.slice(2, 4)
+  if (user.isVerifier) return main.slice(2, 3)
+  return kaspiInTabBar(user) ? main.slice(2, 3) : main.slice(2, 4)
 }
 
 /** Что не поместилось в нижнюю панель — открывается из профиля в верхней полосе */
@@ -304,7 +313,7 @@ export function MobileHeader({ user }: { user: NavUser }) {
                   badge={item.href === "/users" ? user.pendingCount : undefined}
                 />
               ))}
-              <KaspiNav user={user} onNavigate={() => setMenuOpen(false)} />
+              {!kaspiInTabBar(user) && <KaspiNav user={user} onNavigate={() => setMenuOpen(false)} />}
               <div className="my-2 border-t" />
               <LogoutButton />
             </div>
@@ -312,6 +321,35 @@ export function MobileHeader({ user }: { user: NavUser }) {
         </SheetContent>
       </Sheet>
     </header>
+  )
+}
+
+/** Вкладка Kaspi в нижней панели: значок магазина и число новых заказов (или красная точка, если токен не работает) */
+function KaspiTab({ user, active }: { user: NavUser; active: boolean }) {
+  const badge = user.kaspi === "active" ? (user.kaspiNew ?? 0) : 0
+  return (
+    <Link
+      href="/kaspi"
+      className={cn(
+        "flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 text-[10.5px] font-medium tracking-tight",
+        active ? "text-primary" : "text-muted-foreground"
+      )}
+    >
+      <span className="relative">
+        <KaspiMark className={cn("size-[22px]", !active && "opacity-80")} />
+        {badge > 0 ? (
+          <span className="absolute -top-1.5 -right-2.5 min-w-4 rounded-full bg-rose-500 px-1 text-center text-[10px] leading-4 font-semibold text-white tabular-nums ring-2 ring-card">
+            {badge > 99 ? "99+" : badge}
+          </span>
+        ) : (
+          user.kaspi === "invalid" && (
+            <span title="Токен не работает" className="absolute -top-0.5 -right-0.5 size-2.5 rounded-full bg-rose-500 ring-2 ring-card" />
+          )
+        )}
+      </span>
+      Kaspi
+      {badge > 0 && <span className="sr-only">новых заказов: {badge}</span>}
+    </Link>
   )
 }
 
@@ -356,6 +394,7 @@ export function MobileTabBar({ user }: { user: NavUser }) {
             </button>
           </div>
           {tabBarRight(user).map(tab)}
+          {kaspiInTabBar(user) && <KaspiTab user={user} active={pathname.startsWith("/kaspi")} />}
         </div>
       </nav>
 

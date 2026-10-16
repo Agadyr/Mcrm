@@ -2,7 +2,7 @@
 import { SignJWT, jwtVerify } from "jose"
 
 export const SESSION_COOKIE = "mcrm_session"
-export const SESSION_MAX_AGE = 60 * 60 * 24 * 30 // 30 дней
+export const SESSION_MAX_AGE = 60 * 60 * 24 * 14 // 14 дней
 
 export type SessionPayload = {
   sub: string // id пользователя

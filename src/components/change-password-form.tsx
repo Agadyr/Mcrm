@@ -29,7 +29,7 @@ export function ChangePasswordForm() {
       return
     }
     form.reset()
-    toast.success("Пароль изменён. На других устройствах нужно войти заново.")
+    toast.success("Пароль изменён. На других устройствах нужно войти заново, Telegram привяжите снова.")
   }
 
   return (

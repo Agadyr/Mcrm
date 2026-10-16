@@ -27,7 +27,13 @@ export default async function KaspiPage({ searchParams }: { searchParams: Promis
   const states = KASPI_TABS.find((t) => t.key === tab)!.states as readonly string[]
 
   const [orders, counts, stock] = await Promise.all([
-    prisma.kaspiOrder.findMany({ where: { ownerId: user.id, state: { in: [...states] } }, orderBy: { orderedAt: "desc" }, take: MAX_ORDERS }),
+    prisma.kaspiOrder.findMany({
+      where: { ownerId: user.id, state: { in: [...states] } },
+      orderBy: { orderedAt: "desc" },
+      take: MAX_ORDERS,
+      // активные продажи по заказу — по телефону на каждую
+      include: { sales: { where: { cancelledAt: null }, orderBy: { createdAt: "asc" }, select: { phone: { select: { model: true, memoryGb: true, imei1: true } } } } },
+    }),
     prisma.kaspiOrder.groupBy({ by: ["state"], where: { ownerId: user.id }, _count: { _all: true } }),
     prisma.phone.findMany({
       where: { ownerId: user.id, status: { in: ["IN_STOCK", "RESERVED"] } },
@@ -52,11 +58,14 @@ export default async function KaspiPage({ searchParams }: { searchParams: Promis
     customerPhone: o.customerPhone,
     address: o.address,
     entries: o.entries as unknown as KaspiEntry[],
-    hasSale: !!o.saleId,
+    hasSale: o.sales.length > 0,
+    soldPhones: o.sales.map((s) => s.phone),
     imeiRequired: o.imeiRequired,
     imeiSent: !!o.imeiSentAt,
     waybill: o.waybill,
     waybillNumber: o.waybillNumber,
+    assembled: o.assembled,
+    courierAt: o.courierAt?.toISOString() ?? null,
   }))
   const stockOptions: StockOption[] = stock
 

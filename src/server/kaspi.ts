@@ -120,6 +120,8 @@ export type KaspiOrderData = {
   imeiRequired: boolean
   waybill: string | null
   waybillNumber: string | null
+  assembled: boolean
+  courierAt: Date | null
   /** ссылка на товары заказа, если Kaspi её прислал */
   entriesUrl: string
 }
@@ -144,6 +146,8 @@ export function parseOrder(item: JsonApiItem, fallbackState: string): KaspiOrder
   const name = str(customer.name) ?? ([str(customer.firstName), str(customer.lastName)].filter(Boolean).join(" ") || null)
   const phone = str(customer.cellPhone)
   const ordered = date(a.creationDate)
+  // накладная и курьер Kaspi Доставки лежат в attributes.kaspiDelivery
+  const kd = (a.kaspiDelivery ?? {}) as Record<string, unknown>
   return {
     kaspiId: item.id,
     code: str(a.code) ?? item.id,
@@ -160,8 +164,10 @@ export function parseOrder(item: JsonApiItem, fallbackState: string): KaspiOrder
     customerPhone: cleanPhone(phone),
     address: str(address.formattedAddress) ?? ([str(address.town), str(address.streetName), str(address.streetNumber)].filter(Boolean).join(", ") || null),
     imeiRequired: a.isImeiRequired === true,
-    waybill: str(a.waybill),
-    waybillNumber: str(a.waybillNumber),
+    waybill: str(kd.waybill) ?? str(a.waybill),
+    waybillNumber: str(kd.waybillNumber) ?? str(a.waybillNumber),
+    assembled: a.assembled === true,
+    courierAt: date(kd.courierTransmissionPlanningDate) ?? date(kd.courierTransmissionDate),
     entriesUrl: item.relationships?.entries?.links?.related ?? `/orders/${item.id}/entries`,
   }
 }
@@ -178,6 +184,14 @@ export async function listOrders(token: string, state: KaspiState, now = Date.no
     if (data.length < 100 || (pages != null && page + 1 >= pages)) break
   }
   return out
+}
+
+/** Один заказ по номеру — без окна в 14 дней (для старых незавершённых заказов) */
+export async function getOrderByCode(token: string, code: string, fallbackState: string): Promise<KaspiOrderData | null> {
+  const q = new URLSearchParams({ "page[number]": "0", "page[size]": "1", "filter[orders][code]": code }).toString()
+  const res = await request<JsonApiList>(token, `/orders?${q}`)
+  const item = res?.data?.[0]
+  return item ? parseOrder(item, fallbackState) : null
 }
 
 /** Товары заказа: название берём из offer/названия позиции, иначе — из карточки товара по ссылке */
