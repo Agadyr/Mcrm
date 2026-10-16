@@ -9,9 +9,11 @@ import {
   connectKaspiAction,
   createSaleFromKaspiOrderAction,
   recheckKaspiAction,
+  sendKaspiImeiAction,
   setKaspiAutoAcceptAction,
   syncKaspiAction,
 } from "@/server/actions/kaspi"
+import { cancelSaleAction } from "@/server/actions/phones"
 import { encryptSecret } from "@/lib/secret-box"
 import { TOKEN_UNREADABLE, purgeOldKaspiPii, syncAllKaspiShops, syncKaspiOrders } from "@/server/kaspi-sync"
 import { createPhone, createUser, loginAs } from "../support/factories"
@@ -26,6 +28,9 @@ let orders: FakeOrder[] = []
 let posts: { url: string; headers: Record<string, string>; body: { data: { id?: string; type: string; attributes: Record<string, unknown>; relationships?: { entry: { data: { id: string } } } } } }[] = []
 let down = false
 let codeLookups: string[] = []
+let imeiDown = false // Kaspi не принимает IMEI
+// свой состав заказа: id заказа → позиции (по умолчанию — один телефон на всю сумму)
+const customEntries = new Map<string, { id: string; quantity: number; totalPrice: number; name: string; imei?: boolean }[]>()
 
 const attrs = (o: FakeOrder) => ({
   code: o.code,
@@ -54,6 +59,8 @@ beforeEach(() => {
   posts = []
   down = false
   codeLookups = []
+  imeiDown = false
+  customEntries.clear()
   assembled.clear()
   noImei.clear()
   vi.mocked(sendTelegram).mockClear()
@@ -66,11 +73,20 @@ beforeEach(() => {
       const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 })
       if (init.method === "POST") {
         const body = JSON.parse(init.body!)
+        if (imeiDown && input.endsWith("/orderEntryImeiOperation")) return new Response("{}", { status: 400 })
         posts.push({ url: input, headers: init.headers, body })
         if (body.data.attributes.status === "ASSEMBLE") assembled.add(body.data.id)
         return json({})
       }
       const entries = url.pathname.match(/\/orders\/(.+)\/entries/)
+      if (entries && customEntries.has(entries[1])) {
+        return json({
+          data: customEntries.get(entries[1])!.map((e) => ({
+            id: e.id,
+            attributes: { quantity: e.quantity, totalPrice: e.totalPrice, basePrice: e.totalPrice / e.quantity, isImeiRequired: e.imei ?? true, offer: { name: e.name, code: e.id } },
+          })),
+        })
+      }
       if (entries) {
         return json({ data: [{ id: `entry-${entries[1]}`, attributes: { quantity: 1, totalPrice: orders.find((o) => o.id === entries[1])!.total, basePrice: 1, isImeiRequired: !noImei.has(entries[1]), offer: { name: "iPhone 15 Pro 256GB", code: "SKU1" } } }] })
       }
@@ -175,11 +191,83 @@ describe("заказы Kaspi", () => {
     const sale = await prisma.sale.findFirstOrThrow({ where: { phoneId: phone.id } })
     expect(sale).toMatchObject({ salePrice: 520_000, paymentMethod: "KASPI", paidAmount: 520_000, buyerName: "Ержан Ахметов", buyerPhone: "+77011234567" })
     expect(sale.note).toContain("100001")
-    expect((await prisma.kaspiOrder.findUniqueOrThrow({ where: { id: o1.id } })).saleId).toBe(sale.id)
+    expect(sale).toMatchObject({ kaspiOrderId: o1.id, kaspiEntryId: "entry-o1" })
+    // покупатель Kaspi попал в базу клиентов
+    expect(await prisma.customer.findUniqueOrThrow({ where: { id: sale.customerId! } })).toMatchObject({ ownerId: user.id, phone: "+77011234567", name: "Ержан Ахметов" })
     expect((await prisma.phone.findUniqueOrThrow({ where: { id: phone.id } })).status).toBe("SOLD")
     expect(await createSaleFromKaspiOrderAction(o1.id, phone.id)).toMatchObject({ ok: false })
     // по заказу с продажей отмену блокируем: сначала нужно отменить продажу
     expect(await cancelKaspiOrderAction(o1.id, { reason: "BUYER_NOT_REACHABLE" })).toMatchObject({ ok: false })
+  })
+
+  it("заказ на несколько телефонов: по телефону на штуку, продажа на каждый, цена делится, IMEI одним запросом на позицию", async () => {
+    const user = await connected()
+    orders[0].total = 1_100_001
+    customEntries.set("o1", [
+      { id: "e-pro", name: "iPhone 15 Pro 256GB", quantity: 2, totalPrice: 1_000_001 },
+      { id: "e-case", name: "Чехол", quantity: 1, totalPrice: 100_000, imei: false },
+    ])
+    const [a, b, c] = [await createPhone(user.id, { imei2: "356789000011110" }), await createPhone(user.id), await createPhone(user.id)]
+    await syncKaspiAction()
+    const o1 = await prisma.kaspiOrder.findFirstOrThrow({ where: { ownerId: user.id, kaspiId: "o1" } })
+
+    // один телефон на заказ из двух штук, меньше штук, один телефон дважды — нельзя
+    expect(await createSaleFromKaspiOrderAction(o1.id, a.id)).toMatchObject({ ok: false })
+    expect(await createSaleFromKaspiOrderAction(o1.id, { "e-pro": [a.id] })).toMatchObject({ ok: false, error: expect.stringContaining("2 шт.") })
+    expect(await createSaleFromKaspiOrderAction(o1.id, { "e-pro": [a.id, a.id] })).toMatchObject({ ok: false, error: expect.stringContaining("дважды") })
+    // один из телефонов уже продан — не создаётся ни одной продажи
+    await prisma.phone.update({ where: { id: c.id }, data: { status: "SOLD" } })
+    expect(await createSaleFromKaspiOrderAction(o1.id, { "e-pro": [a.id, c.id] })).toMatchObject({ ok: false, error: expect.stringContaining("уже продан") })
+    expect(await prisma.sale.count()).toBe(0)
+    expect((await prisma.phone.findUniqueOrThrow({ where: { id: a.id } })).status).toBe("IN_STOCK")
+
+    const r = await createSaleFromKaspiOrderAction(o1.id, { "e-pro": [a.id, b.id] })
+    expect(r).toMatchObject({ ok: true, data: { imei: { ok: true } } })
+    const sales = await prisma.sale.findMany({ where: { kaspiOrderId: o1.id }, orderBy: { salePrice: "desc" } })
+    expect(sales.map((s) => [s.phoneId, s.salePrice, s.kaspiEntryId])).toEqual([
+      [a.id, 500_001, "e-pro"],
+      [b.id, 500_000, "e-pro"],
+    ])
+    expect(sales.every((s) => s.paymentMethod === "KASPI" && s.buyerName === "Ержан Ахметов")).toBe(true)
+    expect(await prisma.phone.count({ where: { id: { in: [a.id, b.id] }, status: "SOLD" } })).toBe(2)
+
+    const imeiPosts = posts.filter((p) => p.url.endsWith("/orderEntryImeiOperation"))
+    expect(imeiPosts).toHaveLength(1)
+    expect(imeiPosts[0].body.data).toMatchObject({
+      attributes: { items: [{ imei: [a.imei1, "356789000011110"] }, { imei: [b.imei1] }] },
+      relationships: { entry: { data: { id: "e-pro" } } },
+    })
+    expect((await prisma.kaspiOrder.findUniqueOrThrow({ where: { id: o1.id } })).imeiSentAt).not.toBeNull()
+    expect(await createSaleFromKaspiOrderAction(o1.id, { "e-pro": [a.id, b.id] })).toMatchObject({ ok: false, error: expect.stringContaining("уже оформлена") })
+  })
+
+  it("Kaspi не принял IMEI: продажи остаются, «Отправить IMEI» шлёт все телефоны заново; после отмены продаж заказ можно отменить", async () => {
+    const user = await connected()
+    customEntries.set("o1", [{ id: "e1", name: "iPhone 15 Pro 256GB", quantity: 2, totalPrice: 520_000 }])
+    const [a, b] = [await createPhone(user.id), await createPhone(user.id)]
+    await syncKaspiAction()
+    const o1 = await prisma.kaspiOrder.findFirstOrThrow({ where: { ownerId: user.id, kaspiId: "o1" } })
+
+    imeiDown = true
+    const r = await createSaleFromKaspiOrderAction(o1.id, { e1: [a.id, b.id] })
+    expect(r).toMatchObject({ ok: true, data: { imei: { ok: false, error: expect.any(String) } } })
+    expect(await prisma.sale.count({ where: { kaspiOrderId: o1.id, cancelledAt: null } })).toBe(2)
+    expect((await prisma.kaspiOrder.findUniqueOrThrow({ where: { id: o1.id } })).imeiSentAt).toBeNull()
+    expect(await sendKaspiImeiAction(o1.id)).toMatchObject({ ok: false })
+
+    imeiDown = false
+    expect((await sendKaspiImeiAction(o1.id)).ok).toBe(true)
+    const sent = posts.filter((p) => p.url.endsWith("/orderEntryImeiOperation"))
+    expect(sent).toHaveLength(1)
+    expect(sent[0].body.data.attributes).toEqual({ items: [{ imei: [a.imei1] }, { imei: [b.imei1] }] })
+    expect((await prisma.kaspiOrder.findUniqueOrThrow({ where: { id: o1.id } })).imeiSentAt).not.toBeNull()
+
+    // отменили одну продажу — IMEI по позиции уже не сходится, заказ ещё нельзя отменить
+    await cancelSaleAction(a.id)
+    expect(await sendKaspiImeiAction(o1.id)).toMatchObject({ ok: false, error: expect.stringContaining("продано 1") })
+    expect(await cancelKaspiOrderAction(o1.id, { reason: "BUYER_NOT_REACHABLE" })).toMatchObject({ ok: false })
+    await cancelSaleAction(b.id)
+    expect((await cancelKaspiOrderAction(o1.id, { reason: "BUYER_NOT_REACHABLE" })).ok).toBe(true)
   })
 
   it("выдача по коду: без IMEI нельзя; сначала код покупателю, потом подтверждение", async () => {

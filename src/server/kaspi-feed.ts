@@ -1,6 +1,7 @@
 import "server-only"
 import { prisma } from "@/lib/db"
 import { brandOf } from "@/lib/kaspi-labels"
+import { phoneMatchesOffer } from "@/lib/kaspi-match"
 
 // Прайс-лист Kaspi (XML kaspi_catalog, схема http://kaspi.kz/kaspishopping.xsd). Kaspi забирает его по ссылке
 // раз в 60 минут. Цена — из товара прайса, остаток — сколько таких телефонов сейчас «В наличии» на складе CRM.
@@ -8,17 +9,9 @@ import { brandOf } from "@/lib/kaspi-labels"
 const xml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;")
 
 type OfferLike = { model: string; memoryGb: number | null; color: string | null }
-type StockPhone = { model: string; memoryGb: number | null; color: string | null }
 
-const norm = (s: string | null | undefined) => (s ?? "").trim().toLowerCase().replace(/\s+/g, " ")
-
-/** Подходит ли телефон под товар прайса: та же модель, и память/цвет, если они указаны у товара */
-export function phoneMatchesOffer(p: StockPhone, o: OfferLike) {
-  if (norm(p.model) !== norm(o.model)) return false
-  if (o.memoryGb != null && p.memoryGb !== o.memoryGb) return false
-  if (o.color && norm(p.color) !== norm(o.color)) return false
-  return true
-}
+// сравнение моделей — общее с экраном «Товары и цены» (регистр, пробелы и марка в начале не важны)
+export { phoneMatchesOffer }
 
 /** Остатки по товарам прайса */
 export async function offerStock(ownerId: string, offers: (OfferLike & { id: string })[]) {

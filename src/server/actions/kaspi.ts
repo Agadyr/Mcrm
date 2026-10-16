@@ -7,10 +7,16 @@ import { requireUser } from "@/lib/auth"
 import { encryptSecret } from "@/lib/secret-box"
 import { fieldErrorsOf, optText, type ActionResult } from "@/lib/validators/common"
 import { todayYmd } from "@/lib/dates"
+import { formatDate, formatMoney } from "@/lib/format"
+import { PAYMENT_METHOD_LABEL } from "@/lib/labels"
 import { KASPI_CANCEL_REASONS, type KaspiCancelReason } from "@/lib/kaspi-labels"
+import { MAX_ENTRY_QUANTITY, entryQuantity, entryTotal, phoneEntries, unitPrices } from "@/lib/kaspi-order"
+import { saleSchema } from "@/lib/validators/phone"
 import { KaspiError, acceptOrder, assembleOrder, cancelOrder, checkKaspiToken, completeOrder, sendImei, tokenHint, type KaspiEntry } from "@/server/kaspi"
 import { TOKEN_UNREADABLE, openShopToken, syncKaspiOrders } from "@/server/kaspi-sync"
-import { sellPhoneAction } from "@/server/actions/phones"
+import { findOrCreateCustomer } from "@/server/customers"
+import { logEvent } from "@/server/history"
+import { saleCreateData } from "@/server/sale-data"
 
 // Подключение магазина Kaspi. Токен проверяется у Kaspi до сохранения и хранится зашифрованным.
 
@@ -132,9 +138,9 @@ export async function cancelKaspiOrderAction(orderId: string, input: unknown): P
   const parsed = cancelSchema.safeParse(input)
   if (!parsed.success) return { ok: false, error: "Выберите причину отмены", fieldErrors: fieldErrorsOf(parsed.error) }
   const ctx = await shopOf(user.id)
-  const order = await prisma.kaspiOrder.findFirst({ where: { id: orderId, ownerId: user.id } })
+  const order = await prisma.kaspiOrder.findFirst({ where: { id: orderId, ownerId: user.id }, include: { _count: { select: { sales: { where: { cancelledAt: null } } } } } })
   if (!ctx || !order) return { ok: false, error: "Заказ не найден" }
-  if (order.saleId) return { ok: false, error: "По заказу уже оформлена продажа — сначала отмените её в «Продажах»" }
+  if (order._count.sales) return { ok: false, error: "По заказу уже оформлена продажа — сначала отмените её в «Продажах»" }
   if (order.status !== "APPROVED_BY_BANK" && order.status !== "ACCEPTED_BY_MERCHANT") return { ok: false, error: "Этот заказ уже нельзя отменить" }
   try {
     await cancelOrder(ctx.token, { kaspiId: order.kaspiId, code: order.code }, parsed.data.reason, parsed.data.comment ?? undefined)
@@ -146,24 +152,36 @@ export async function cancelKaspiOrderAction(orderId: string, input: unknown): P
   return { ok: true, data: undefined }
 }
 
-/** Позиция заказа, в которую отправляется IMEI (заказ на один телефон) */
-function imeiEntry(entries: KaspiEntry[]) {
-  const withId = entries.filter((e) => e.id)
-  return withId.find((e) => e.imeiRequired) ?? (withId.length === 1 ? withId[0] : undefined)
-}
-
 const imeisOf = (p: { imei1: string; imei2: string | null }) => [p.imei1, p.imei2].filter((v): v is string => !!v)
 
-/** Отправить IMEI телефона из продажи в позицию заказа Kaspi */
+/**
+ * Отправить в Kaspi IMEI всех телефонов из продаж по заказу: по одному запросу на позицию,
+ * в запросе — столько телефонов, сколько штук в позиции. Повторная отправка шлёт их все заново.
+ */
 async function pushImei(userId: string, orderId: string): Promise<{ ok: true } | { ok: false; error: string }> {
-  const order = await prisma.kaspiOrder.findFirst({ where: { id: orderId, ownerId: userId }, include: { sale: { include: { phone: true } } } })
+  const order = await prisma.kaspiOrder.findFirst({
+    where: { id: orderId, ownerId: userId },
+    include: { sales: { where: { cancelledAt: null }, orderBy: { createdAt: "asc" }, include: { phone: { select: { imei1: true, imei2: true } } } } },
+  })
   const ctx = await shopOf(userId)
   if (!order || !ctx) return { ok: false, error: "Заказ не найден" }
-  if (!order.sale) return { ok: false, error: "Сначала оформите продажу — IMEI берётся из проданного телефона" }
-  const entry = imeiEntry(order.entries as unknown as KaspiEntry[])
-  if (!entry?.id) return { ok: false, error: "Kaspi не прислал позицию заказа — нажмите «Обновить» и попробуйте снова" }
+  if (!order.sales.length) return { ok: false, error: "Сначала оформите продажу — IMEI берётся из проданных телефонов" }
+  const entries = phoneEntries(order.entries as unknown as KaspiEntry[], order.imeiRequired)
+  if (!entries.length) return { ok: false, error: "Kaspi не прислал позицию заказа — нажмите «Обновить» и попробуйте снова" }
+
+  // продажи, оформленные до разбивки по позициям, относятся к единственной позиции заказа
+  const devices = new Map<string, string[][]>()
+  for (const s of order.sales) {
+    const entryId = s.kaspiEntryId ?? (entries.length === 1 ? entries[0].id : null)
+    if (entryId) devices.set(entryId, [...(devices.get(entryId) ?? []), imeisOf(s.phone)])
+  }
+  for (const e of entries) {
+    const n = devices.get(e.id)?.length ?? 0
+    if (n !== entryQuantity(e))
+      return { ok: false, error: `«${e.name}»: в заказе ${entryQuantity(e)} шт., а продано ${n}. Отмените продажи по заказу в «Продажах» и оформите продажу заново` }
+  }
   try {
-    await sendImei(ctx.token, entry.id, [imeisOf(order.sale.phone)])
+    for (const e of entries) await sendImei(ctx.token, e.id, devices.get(e.id)!)
   } catch (e) {
     return { ok: false, error: e instanceof KaspiError ? e.message : "Не удалось отправить IMEI в Kaspi" }
   }
@@ -171,37 +189,105 @@ async function pushImei(userId: string, orderId: string): Promise<{ ok: true } |
   return { ok: true }
 }
 
+/** Выбор телефонов: { id позиции: [id телефонов] } — по телефону на каждую штуку. Строка — один телефон на заказ из одного телефона. */
+const picksSchema = z.union([z.string().min(1), z.record(z.string(), z.array(z.string().min(1)).max(MAX_ENTRY_QUANTITY))])
+
+class SaleConflict extends Error {}
+
 /**
- * Оформить продажу по заказу: выбираете телефон со склада — продажа создаётся как обычно (Kaspi, цена и покупатель из заказа),
- * а IMEI этого телефона сразу уходят в Kaspi (обязательно для телефонов с 25.05.2025).
+ * Оформить продажу по заказу: на каждую штуку позиции с IMEI выбираете свой телефон со склада. Создаётся продажа на каждый
+ * телефон (Kaspi, цена позиции делится по штукам, покупатель из заказа) — все вместе или ни одной.
+ * Затем IMEI всех телефонов уходят в Kaspi (обязательно для телефонов с 25.05.2025); если Kaspi не принял — продажи остаются,
+ * отправить можно ещё раз кнопкой «Отправить IMEI».
  */
-export async function createSaleFromKaspiOrderAction(orderId: string, phoneId: string): Promise<ActionResult<{ saleId: string; imei: { ok: boolean; error?: string } }>> {
+export async function createSaleFromKaspiOrderAction(
+  orderId: string,
+  input: unknown
+): Promise<ActionResult<{ saleIds: string[]; imei: { ok: boolean; error?: string } }>> {
   const user = await requireUser()
   if (user.role === "VERIFIER") return NO_SHOP
-  const order = await prisma.kaspiOrder.findFirst({ where: { id: orderId, ownerId: user.id } })
+  const picksParsed = picksSchema.safeParse(input)
+  if (!picksParsed.success) return { ok: false, error: "Выберите телефоны со склада" }
+  const order = await prisma.kaspiOrder.findFirst({ where: { id: orderId, ownerId: user.id }, include: { _count: { select: { sales: { where: { cancelledAt: null } } } } } })
   if (!order) return { ok: false, error: "Заказ не найден" }
-  if (order.saleId) return { ok: false, error: "Продажа по этому заказу уже оформлена" }
+  if (order._count.sales) return { ok: false, error: "Продажа по этому заказу уже оформлена" }
   if (order.status === "CANCELLED") return { ok: false, error: "Заказ отменён" }
-  const entries = order.entries as unknown as KaspiEntry[]
-  if (!order.imeiRequired && !entries.some((e) => e.imeiRequired)) return { ok: false, error: "В заказе нет телефона — продажа со склада CRM не нужна" }
+  const allEntries = order.entries as unknown as KaspiEntry[]
+  if (!order.imeiRequired && !allEntries.some((e) => e.imeiRequired)) return { ok: false, error: "В заказе нет телефона — продажа со склада CRM не нужна" }
+  const entries = phoneEntries(allEntries, order.imeiRequired)
+  if (!entries.length || allEntries.some((e) => e.imeiRequired && !e.id)) return { ok: false, error: "Kaspi не прислал позицию заказа — нажмите «Обновить» и попробуйте снова" }
 
-  const sold = await sellPhoneAction(phoneId, {
-    salePrice: order.totalPrice,
-    soldAt: todayYmd(),
-    buyerName: order.customerName,
-    buyerPhone: order.customerPhone,
-    paymentMethod: "KASPI",
-    note: `Заказ Kaspi №${order.code}`,
-  })
-  if (!sold.ok) return { ok: false, error: sold.error }
-  await prisma.kaspiOrder.update({ where: { id: order.id }, data: { saleId: sold.data.saleId } })
-  // продажа уже сохранена; если Kaspi не принял IMEI — покажем, отправить можно ещё раз
+  let picks = picksParsed.data
+  if (typeof picks === "string") {
+    if (entries.length !== 1 || entryQuantity(entries[0]) !== 1) return { ok: false, error: "В заказе несколько телефонов — выберите телефон на каждую штуку" }
+    picks = { [entries[0].id]: [picks] }
+  }
+
+  // телефоны по позициям: ровно столько, сколько штук, и все разные
+  const plan: { entry: (typeof entries)[number]; phoneId: string; price: number; unit: number; units: number }[] = []
+  for (const e of entries) {
+    const qty = entryQuantity(e)
+    const ids = picks[e.id] ?? []
+    if (ids.length !== qty) return { ok: false, error: `«${e.name}»: выберите ${qty} шт. — по телефону на каждую` }
+    // сумма позиции из Kaspi; если её нет, а позиция одна — сумма заказа
+    const total = entryTotal(e) || (entries.length === 1 ? order.totalPrice : 0)
+    unitPrices(total, qty).forEach((price, i) => plan.push({ entry: e, phoneId: ids[i], price, unit: i + 1, units: qty }))
+  }
+  const phoneIds = plan.map((p) => p.phoneId)
+  if (new Set(phoneIds).size !== phoneIds.length) return { ok: false, error: "Один и тот же телефон выбран дважды — на каждую штуку нужен свой" }
+  const phones = await prisma.phone.findMany({ where: { id: { in: phoneIds }, ownerId: user.id } })
+  if (phones.length !== phoneIds.length) return { ok: false, error: "Телефон не найден" }
+  const sold = phones.find((p) => p.status === "SOLD")
+  if (sold) return { ok: false, error: `Телефон ${sold.model} (…${sold.imei1.slice(-4)}) уже продан` }
+  const byId = new Map(phones.map((p) => [p.id, p]))
+
+  const soldAt = todayYmd()
+  let saleIds: string[]
+  try {
+    saleIds = await prisma.$transaction(async (tx) => {
+      // двойной клик / вторая вкладка: продажу по заказу уже оформили
+      if (await tx.sale.count({ where: { kaspiOrderId: order.id, cancelledAt: null } })) throw new SaleConflict("Продажа по этому заказу уже оформлена")
+      const ids: string[] = []
+      // покупатель Kaspi с номером попадает в базу клиентов (или находится там)
+      const customerId = await findOrCreateCustomer(tx, user.id, order.customerName, order.customerPhone)
+      for (const p of plan) {
+        const phone = byId.get(p.phoneId)!
+        const d = saleSchema.parse({
+          salePrice: p.price,
+          soldAt,
+          buyerName: order.customerName,
+          buyerPhone: order.customerPhone,
+          paymentMethod: "KASPI",
+          note: `Заказ Kaspi №${order.code}` + (plan.length > 1 ? ` · ${p.entry.name}${p.units > 1 ? `, ${p.unit} из ${p.units}` : ""}` : ""),
+        })
+        // телефон могли продать параллельно — тогда откатываем все продажи заказа
+        const { count } = await tx.phone.updateMany({ where: { id: phone.id, status: { not: "SOLD" } }, data: { status: "SOLD" } })
+        if (!count) throw new SaleConflict(`Телефон ${phone.model} (…${phone.imei1.slice(-4)}) уже продан`)
+        const sale = await tx.sale.create({ data: { ...saleCreateData(d), phoneId: phone.id, kaspiOrderId: order.id, kaspiEntryId: p.entry.id, customerId }, select: { id: true } })
+        await logEvent(
+          tx,
+          phone.id,
+          "SOLD",
+          `Продан ${formatDate(d.soldAt)} за ${formatMoney(d.salePrice)} (${PAYMENT_METHOD_LABEL.KASPI}) по заказу Kaspi №${order.code}` +
+            (d.buyerName ? `, покупатель: ${d.buyerName}` : "") +
+            `. Прибыль ${formatMoney(d.salePrice - phone.purchasePrice)}`,
+          user.id
+        )
+        ids.push(sale.id)
+      }
+      return ids
+    })
+  } catch (e) {
+    if (e instanceof SaleConflict) return { ok: false, error: e.message }
+    throw e
+  }
+  // продажи уже сохранены; если Kaspi не принял IMEI — покажем, отправить можно ещё раз
   const imei = await pushImei(user.id, order.id)
   refresh()
-  return { ok: true, data: { saleId: sold.data.saleId, imei: imei.ok ? { ok: true } : { ok: false, error: imei.error } } }
+  return { ok: true, data: { saleIds, imei: imei.ok ? { ok: true } : { ok: false, error: imei.error } } }
 }
 
-/** Повторно отправить IMEI (если в первый раз Kaspi не принял) */
+/** Повторно отправить IMEI (если в первый раз Kaspi не принял) — всех телефонов заказа */
 export async function sendKaspiImeiAction(orderId: string): Promise<ActionResult> {
   const user = await requireUser()
   const r = await pushImei(user.id, orderId)

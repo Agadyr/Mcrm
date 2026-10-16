@@ -3,7 +3,8 @@
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { CheckIcon, CopyIcon, Loader2Icon, PencilIcon, PlusIcon, RefreshCwIcon, Trash2Icon, TriangleAlertIcon } from "lucide-react"
+import Link from "next/link"
+import { CheckIcon, ChevronDownIcon, CopyIcon, Loader2Icon, PencilIcon, PlusIcon, RefreshCwIcon, Trash2Icon, TriangleAlertIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -32,10 +33,16 @@ export type OfferRow = {
   preOrderDays: number | null
   active: boolean
   stock: number
+  /** телефоны «В наличии», которые уходят в остаток Kaspi */
+  matched: StockPhoneRow[]
+  /** остатка нет, но на складе есть похожие модели (например, «iPhone 15» и «iPhone 15 Pro») */
+  similar: StockPhoneRow[]
+  similarCount: number
 }
+export type StockPhoneRow = { id: string; model: string; memoryGb: number | null; color: string | null; imei1: string }
 export type Suggestion = { key: string; model: string; memoryGb: number | null; color: string | null; title: string; brand: string; count: number; maxPurchase: number }
 
-type Draft = Partial<Omit<OfferRow, "id" | "stock">> & { id?: string }
+type Draft = Partial<Omit<OfferRow, "id" | "stock" | "matched" | "similar" | "similarCount">> & { id?: string }
 
 /** Товары и цены для Kaspi: прайс-лист по ссылке, остатки — со склада CRM */
 export function KaspiOffers({
@@ -44,12 +51,15 @@ export function KaspiOffers({
   feedPath,
   offers,
   suggestions,
+  models,
 }: {
   settings: { merchantId: string; storeId: string }
   feedUrl: string | null
   feedPath: string | null
   offers: OfferRow[]
   suggestions: Suggestion[]
+  /** модели телефонов склада — подсказки для поля «Модель» */
+  models: string[]
 }) {
   const [draft, setDraft] = useState<Draft | null>(null)
   const configured = !!feedPath
@@ -120,7 +130,7 @@ export function KaspiOffers({
         </section>
       )}
 
-      {draft && <OfferDialog draft={draft} onClose={() => setDraft(null)} />}
+      {draft && <OfferDialog draft={draft} models={models} onClose={() => setDraft(null)} />}
     </div>
   )
 }
@@ -225,6 +235,9 @@ function OfferItem({ offer: o, onEdit }: { offer: OfferRow; onEdit: () => void }
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [deleteOpen, setDeleteOpen] = useState(false)
+  // раскрытый список: телефоны в остатке или похожие модели
+  const [list, setList] = useState<"matched" | "similar" | null>(null)
+  const similarHint = o.active && o.stock === 0 && o.similarCount > 0
   const status = !o.active ? "снят с продажи" : o.stock > 0 ? `в наличии ${o.stock} шт.` : o.preOrderDays ? `предзаказ ${o.preOrderDays} дн.` : "нет в наличии"
 
   function toggle() {
@@ -236,33 +249,62 @@ function OfferItem({ offer: o, onEdit }: { offer: OfferRow; onEdit: () => void }
   }
 
   return (
-    <li className={cn("flex flex-wrap items-center gap-3 px-5 py-3.5", !o.active && "opacity-60")}>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium">{o.title}</div>
-        <div className="text-xs text-muted-foreground">
-          <span className="font-mono">{o.sku}</span> · {[o.model, formatMemory(o.memoryGb), o.color].filter(Boolean).join(" · ")}
+    <li className={cn("px-5 py-3.5", !o.active && "opacity-60")}>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium">{o.title}</div>
+          <div className="text-xs text-muted-foreground">
+            <span className="font-mono">{o.sku}</span> · {[o.model, formatMemory(o.memoryGb), o.color].filter(Boolean).join(" · ")}
+            {o.stock > 0 && (
+              <>
+                {" · "}
+                <button
+                  type="button"
+                  onClick={() => setList(list === "matched" ? null : "matched")}
+                  aria-expanded={list === "matched"}
+                  className="inline-flex items-center gap-0.5 font-medium text-foreground underline-offset-2 hover:underline"
+                >
+                  на складе {o.stock} шт.
+                  <ChevronDownIcon className={cn("size-3.5 transition-transform", list === "matched" && "rotate-180")} />
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+        <span
+          className={cn(
+            "inline-flex h-6 items-center rounded-full px-2.5 text-xs font-medium",
+            !o.active ? "bg-muted text-muted-foreground" : o.stock > 0 ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300"
+          )}
+        >
+          {status}
+        </span>
+        <span className="w-28 text-right text-sm font-semibold tabular-nums">{formatMoney(o.price)}</span>
+        <div className="flex gap-1">
+          <Button variant="ghost" size="sm" onClick={toggle} disabled={pending}>
+            {o.active ? "Снять" : "Вернуть"}
+          </Button>
+          <Button variant="ghost" size="icon-sm" onClick={onEdit} aria-label="Изменить">
+            <PencilIcon />
+          </Button>
+          <Button variant="ghost" size="icon-sm" onClick={() => setDeleteOpen(true)} aria-label="Удалить" className="text-muted-foreground">
+            <Trash2Icon />
+          </Button>
         </div>
       </div>
-      <span
-        className={cn(
-          "inline-flex h-6 items-center rounded-full px-2.5 text-xs font-medium",
-          !o.active ? "bg-muted text-muted-foreground" : o.stock > 0 ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300" : "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300"
-        )}
-      >
-        {status}
-      </span>
-      <span className="w-28 text-right text-sm font-semibold tabular-nums">{formatMoney(o.price)}</span>
-      <div className="flex gap-1">
-        <Button variant="ghost" size="sm" onClick={toggle} disabled={pending}>
-          {o.active ? "Снять" : "Вернуть"}
-        </Button>
-        <Button variant="ghost" size="icon-sm" onClick={onEdit} aria-label="Изменить">
-          <PencilIcon />
-        </Button>
-        <Button variant="ghost" size="icon-sm" onClick={() => setDeleteOpen(true)} aria-label="Удалить" className="text-muted-foreground">
-          <Trash2Icon />
-        </Button>
-      </div>
+      {similarHint && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg bg-amber-50 px-3 py-2 text-[13px] text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          <TriangleAlertIcon className="size-4 shrink-0" />
+          <span className="min-w-0 flex-1">
+            Телефонов с моделью «{o.model}»{o.memoryGb || o.color ? ` (${[formatMemory(o.memoryGb), o.color].filter(Boolean).join(", ")})` : ""} нет, но на складе есть похожие:{" "}
+            {o.similarCount} шт. Возможно, модель записана по-другому.
+          </span>
+          <button type="button" onClick={() => setList(list === "similar" ? null : "similar")} aria-expanded={list === "similar"} className="font-medium underline underline-offset-2">
+            {list === "similar" ? "Скрыть" : "Показать похожие"}
+          </button>
+        </div>
+      )}
+      {list && <StockPhoneList phones={list === "matched" ? o.matched : o.similar} total={list === "matched" ? o.stock : o.similarCount} />}
       <ConfirmDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
@@ -283,7 +325,26 @@ function OfferItem({ offer: o, onEdit }: { offer: OfferRow; onEdit: () => void }
   )
 }
 
-function OfferDialog({ draft, onClose }: { draft: Draft; onClose: () => void }) {
+/** Телефоны склада у товара прайса — со ссылкой на карточку телефона */
+function StockPhoneList({ phones, total }: { phones: StockPhoneRow[]; total: number }) {
+  return (
+    <div className="mt-2 rounded-xl bg-muted/40">
+      <ul className="max-h-64 divide-y overflow-y-auto">
+        {phones.map((p) => (
+          <li key={p.id}>
+            <Link href={`/phones/${p.id}`} className="flex items-center gap-3 px-3 py-2 text-[13px] hover:bg-muted">
+              <span className="min-w-0 flex-1 truncate">{[p.model, formatMemory(p.memoryGb), p.color].filter(Boolean).join(" · ")}</span>
+              <span className="font-mono text-xs text-muted-foreground">…{p.imei1.slice(-4)}</span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+      {total > phones.length && <p className="px-3 py-2 text-xs text-muted-foreground">Показаны первые {phones.length} из {total}</p>}
+    </div>
+  )
+}
+
+function OfferDialog({ draft, models, onClose }: { draft: Draft; models: string[]; onClose: () => void }) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -327,7 +388,9 @@ function OfferDialog({ draft, onClose }: { draft: Draft; onClose: () => void }) 
         <form onSubmit={submit} className="flex flex-col gap-4">
           <DialogHeader>
             <DialogTitle>{draft.id ? "Товар в прайсе" : "Добавить товар в прайс"}</DialogTitle>
-            <DialogDescription>Остаток посчитается сам: телефоны «В наличии» с этой моделью, памятью и цветом.</DialogDescription>
+            <DialogDescription>
+              Остаток посчитается сам: телефоны «В наличии» с этой моделью, памятью и цветом. Регистр, пробелы и марка в начале («Apple», «Samsung») не важны.
+            </DialogDescription>
           </DialogHeader>
           {field("sku", "Артикул в Kaspi", { placeholder: "Например, 123456789", className: "font-mono", autoFocus: !draft.sku }, "Как у товара в кабинете Kaspi")}
           {field("title", "Название для Kaspi", { placeholder: "Apple iPhone 15 Pro 256GB" })}
@@ -338,11 +401,16 @@ function OfferDialog({ draft, onClose }: { draft: Draft; onClose: () => void }) 
           <div className="rounded-xl bg-muted/50 p-3">
             <div className="mb-2 text-xs font-medium text-muted-foreground">Какие телефоны склада считать</div>
             <div className="grid gap-3 sm:grid-cols-3">
-              {field("model", "Модель", { placeholder: "iPhone 15 Pro" })}
+              {field("model", "Модель", { placeholder: "iPhone 15 Pro", list: "kaspi-stock-models", autoComplete: "off" })}
               {field("memoryGb", "Память, ГБ", { inputMode: "numeric", placeholder: "любая" })}
               {field("color", "Цвет", { placeholder: "любой" })}
             </div>
           </div>
+          <datalist id="kaspi-stock-models">
+            {models.map((m) => (
+              <option key={m} value={m} />
+            ))}
+          </datalist>
           {field("preOrderDays", "Предзаказ, дней", { inputMode: "numeric", placeholder: "нет" }, "Если телефонов нет — Kaspi покажет предзаказ (до 30 дней). Пусто — товар просто закончится.")}
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose} disabled={pending}>

@@ -44,6 +44,21 @@ describe("прайс-лист Kaspi", () => {
     expect(xml).toContain("<price>589000</price>")
   })
 
+  it("марка в начале модели не важна (и в прайсе, и на складе); похожие модели в остаток не идут", async () => {
+    const user = await shop()
+    await createPhone(user.id, { model: "Apple iPhone 15 Pro", memoryGb: 256 })
+    await createPhone(user.id, { model: "iPhone  15 PRO", memoryGb: 256 })
+    await createPhone(user.id, { model: "iPhone 15 Pro Max", memoryGb: 256 }) // похожая, но другая модель
+    await createPhone(user.id, { model: "Galaxy S24", memoryGb: 256 })
+    await saveKaspiOfferAction(null, offer({ sku: "B1" }))
+    await saveKaspiOfferAction(null, offer({ sku: "B2", title: "Samsung Galaxy S24", model: "Samsung Galaxy S24" }))
+
+    const xml = await buildKaspiFeed(user.id)
+    const block = (sku: string) => xml.slice(xml.indexOf(`sku="${sku}"`), xml.indexOf("</offer>", xml.indexOf(`sku="${sku}"`)))
+    expect(block("B1")).toContain('stockCount="2"')
+    expect(block("B2")).toContain('stockCount="1"')
+  })
+
   it("закончились — available=no; с предзаказом — yes и preOrder; снятый с продажи — no", async () => {
     const user = await shop()
     await saveKaspiOfferAction(null, offer({ sku: "A1" }))

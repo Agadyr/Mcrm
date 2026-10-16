@@ -137,8 +137,12 @@ model Sale {
   cancelledAt   DateTime?
   createdAt     DateTime      @default(now())
 
-  payments   SalePayment[]
-  kaspiOrder KaspiOrder?
+  payments SalePayment[]
+
+  // продажа по заказу Kaspi: в заказе может быть несколько телефонов — по продаже на каждый
+  kaspiOrderId String?
+  kaspiOrder   KaspiOrder? @relation(fields: [kaspiOrderId], references: [id], onDelete: SetNull)
+  kaspiEntryId String? // позиция заказа Kaspi, в которую уходит IMEI этого телефона
 
   customerId String? // клиент из базы; buyerName/buyerPhone остаются как снимок на момент продажи
   customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
@@ -147,6 +151,7 @@ model Sale {
   @@index([phoneId, cancelledAt])
   @@index([buyerName])
   @@index([customerId])
+  @@index([kaspiOrderId])
 }
 
 /**
@@ -346,10 +351,9 @@ model KaspiOrder {
   waybillNumber     String?
   assembled         Boolean   @default(false) // передан в Kaspi Доставку (собран, накладная формируется)
   courierAt         DateTime? // когда курьер Kaspi заберёт заказ
-  saleId            String?   @unique // продажа в CRM, оформленная по этому заказу
-  sale              Sale?     @relation(fields: [saleId], references: [id], onDelete: SetNull)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  sales             Sale[] // продажи в CRM по этому заказу — по одной на каждый телефон
 
   @@unique([ownerId, kaspiId])
   @@index([ownerId, state])
