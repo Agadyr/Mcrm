@@ -46,6 +46,7 @@ model User {
   kaspiShop          KaspiShop?
   kaspiOrders        KaspiOrder[]
   kaspiOffers        KaspiOffer[]
+  customers          Customer[]
 }
 
 // ───────── Товары ─────────
@@ -133,9 +134,13 @@ model Sale {
   payments   SalePayment[]
   kaspiOrder KaspiOrder?
 
+  customerId String? // клиент из базы; buyerName/buyerPhone остаются как снимок на момент продажи
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
   @@index([soldAt])
   @@index([phoneId, cancelledAt])
   @@index([buyerName])
+  @@index([customerId])
 }
 
 /** Оплата по продаже: первая — при продаже, следующие — когда покупатель возвращает долг */
@@ -334,4 +339,24 @@ model KaspiOrder {
   @@unique([ownerId, kaspiId])
   @@index([ownerId, state])
   @@index([ownerId, orderedAt])
+}
+
+// ─── Клиенты ─────────────────────────────────────────────────────
+
+/** Покупатель магазина. Находится по телефону (+7XXXXXXXXXX) при каждой продаже — так видно все его покупки и долги */
+model Customer {
+  id        String   @id @default(cuid())
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name      String
+  phone     String? // всегда в виде +7XXXXXXXXXX
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sales Sale[]
+
+  // один клиент на номер в пределах магазина (клиентов без номера может быть сколько угодно)
+  @@unique([ownerId, phone])
+  @@index([ownerId, name])
 }

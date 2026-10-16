@@ -1,7 +1,7 @@
 import type { Metadata } from "next"
 import Link from "next/link"
 import { notFound } from "next/navigation"
-import { ChevronLeftIcon, SmartphoneIcon } from "lucide-react"
+import { ChevronLeftIcon, ContactRoundIcon, SmartphoneIcon } from "lucide-react"
 import { prisma } from "@/lib/db"
 import { requireUser } from "@/lib/auth"
 import { dateToYmd, todayDate } from "@/lib/dates"
@@ -25,6 +25,7 @@ function loadSale(id: string, ownerId: string) {
     include: {
       phone: { select: { id: true, model: true, memoryGb: true, color: true, imei1: true, imei2: true, purchasePrice: true } },
       payments: { orderBy: [{ paidAt: "asc" }, { createdAt: "asc" }] },
+      customer: { select: { id: true, name: true } },
     },
   })
 }
@@ -134,6 +135,11 @@ export default async function SalePage({ params }: { params: Promise<{ id: strin
               <CardTitle>Покупатель</CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col gap-3">
+              {sale.customer && (
+                <Link href={`/customers/${sale.customer.id}`} className="inline-flex w-fit items-center gap-1.5 text-sm font-medium text-primary hover:underline">
+                  <ContactRoundIcon className="size-4" /> Карточка клиента: {sale.customer.name}
+                </Link>
+              )}
               {sale.buyerPhone && (
                 <div className="flex flex-wrap items-center gap-2 text-sm">
                   <a href={`tel:${sale.buyerPhone}`} className={buttonVariants({ variant: "outline", size: "sm" })}>

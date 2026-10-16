@@ -6,6 +6,7 @@ import { useState } from "react"
 import {
   BanknoteIcon,
   ChartNoAxesCombinedIcon,
+  ContactRoundIcon,
   FileSpreadsheetIcon,
   HandCoinsIcon,
   LayoutDashboardIcon,
@@ -51,6 +52,8 @@ const MAIN: NavItem[] = [
   { href: "/verifications", label: "Верификация телефонов", short: "Верификация", icon: ShieldCheckIcon },
   { href: "/verifiers", label: "Верификаторы", icon: UsersIcon },
   { href: "/analytics", label: "Аналитика", icon: ChartNoAxesCombinedIcon },
+  // в конце списка: на телефоне попадает в меню профиля, нижняя панель не меняется
+  { href: "/customers", label: "Клиенты", icon: ContactRoundIcon },
 ]
 const EXTRA: NavItem[] = [
   { href: "/phones/import", label: "Импорт из Excel", icon: FileSpreadsheetIcon },

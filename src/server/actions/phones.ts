@@ -13,6 +13,7 @@ import { phoneSchema, saleSchema, type PhoneData } from "@/lib/validators/phone"
 import { phoneAccessWhere } from "@/server/access"
 import { logEvent } from "@/server/history"
 import { conflictMessage, findImeiConflicts, type ImeiConflict } from "@/server/imei-conflicts"
+import { findOrCreateCustomer } from "@/server/customers"
 import { saleCreateData } from "@/server/sale-data"
 import { syncPhoneWithVerifications } from "@/server/verification-sync"
 
@@ -165,7 +166,9 @@ export async function sellPhoneAction(id: string, input: unknown): Promise<Actio
     (debt > 0 ? `. В долг: ${formatMoney(debt)}${data.dueDate ? ` до ${formatDate(data.dueDate)}` : ""}` : "")
 
   const sale = await prisma.$transaction(async (tx) => {
-    const sale = await tx.sale.create({ data: { ...data, phoneId: id }, select: { id: true } })
+    // покупатель с номером попадает в базу клиентов (или находится там)
+    const customerId = await findOrCreateCustomer(tx, user.id, d.buyerName, d.buyerPhone)
+    const sale = await tx.sale.create({ data: { ...data, phoneId: id, customerId }, select: { id: true } })
     await tx.phone.update({ where: { id }, data: { status: "SOLD" } })
     await logEvent(tx, id, "SOLD", message, user.id)
     return sale
