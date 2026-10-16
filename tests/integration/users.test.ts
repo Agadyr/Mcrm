@@ -23,16 +23,16 @@ describe("управление пользователями", () => {
   it("обычный пользователь не может ничего — перенаправление на главную", async () => {
     const user = await createUser()
     await loginAs(user)
-    await expect(createUserAction({ login: "hacker", password: "secret1", role: "ADMIN" })).rejects.toMatchObject({ url: "/" })
+    await expect(createUserAction({ login: "hacker", password: "secret12", role: "ADMIN" })).rejects.toMatchObject({ url: "/" })
     await expect(setUserActiveAction(user.id, false)).rejects.toBeInstanceOf(RedirectError)
     expect(await prisma.user.count({ where: { role: "ADMIN" } })).toBe(0)
   })
 
   it("администратор создаёт пользователя, логин занят — ошибка", async () => {
     await admin()
-    expect(await createUserAction({ login: "Shop2", password: "secret1", role: "USER" })).toEqual({ ok: true, data: { login: "shop2" } })
-    expect(await createUserAction({ login: "shop2", password: "secret1", role: "USER" })).toMatchObject({ ok: false })
-    expect((await loginAction({ login: "shop2", password: "secret1" })).ok).toBe(true)
+    expect(await createUserAction({ login: "Shop2", password: "secret12", role: "USER" })).toEqual({ ok: true, data: { login: "shop2" } })
+    expect(await createUserAction({ login: "shop2", password: "secret12", role: "USER" })).toMatchObject({ ok: false })
+    expect((await loginAction({ login: "shop2", password: "secret12" })).ok).toBe(true)
   })
 
   it("блокировка сразу выкидывает пользователя, себя заблокировать нельзя", async () => {
@@ -45,12 +45,14 @@ describe("управление пользователями", () => {
     expect(await getCurrentUser()).toBeNull()
   })
 
-  it("сброс пароля снимает блокировку входа", async () => {
+  it("сброс пароля: минимум 8 символов, выкидывает сессии и отвязывает Telegram", async () => {
     await admin()
-    const user = await createUser({ login: "locked", lockedUntil: new Date(Date.now() + 600_000), failedLogins: 3 })
-    expect(await resetUserPasswordAction(user.id, "123")).toMatchObject({ ok: false })
+    const user = await createUser({ login: "reset", telegramChatId: "777", telegramLinkedAt: new Date(), telegramState: { step: "x" } })
+    expect(await resetUserPasswordAction(user.id, "1234567")).toMatchObject({ ok: false })
     expect((await resetUserPasswordAction(user.id, "newpass1")).ok).toBe(true)
-    expect((await loginAction({ login: "locked", password: "newpass1" })).ok).toBe(true)
+    const u = await prisma.user.findUniqueOrThrow({ where: { id: user.id } })
+    expect(u).toMatchObject({ telegramChatId: null, telegramLinkedAt: null, telegramState: null, sessionVersion: user.sessionVersion + 1 })
+    expect((await loginAction({ login: "reset", password: "newpass1" })).ok).toBe(true)
   })
 
   it("пользователя с данными удалить нельзя", async () => {

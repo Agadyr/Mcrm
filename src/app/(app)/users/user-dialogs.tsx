@@ -224,7 +224,7 @@ export function UserActions({
           <DialogHeader>
             <DialogTitle>{done ? "Пароль изменён" : `Новый пароль для ${user.login}`}</DialogTitle>
             <DialogDescription>
-              {done ? "Отправьте новые данные человеку" : "Человека выкинет со всех устройств, войти можно будет только с новым паролем."}
+              {done ? "Отправьте новые данные человеку" : "Человека выкинет со всех устройств и отвяжет Telegram, войти можно будет только с новым паролем."}
             </DialogDescription>
           </DialogHeader>
           {done ? (

@@ -1,6 +1,8 @@
 // Заглушки next/headers и next/navigation для вызова server actions в тестах
 
 export const cookieJar = new Map<string, string>()
+/** Заголовки запроса (например, x-forwarded-for для проверки ограничений по IP) */
+export const headerJar = new Map<string, string>()
 
 const cookieStore = {
   get: (name: string) => (cookieJar.has(name) ? { name, value: cookieJar.get(name)! } : undefined),
@@ -11,7 +13,7 @@ const cookieStore = {
 
 export const headersModule = {
   cookies: async () => cookieStore,
-  headers: async () => new Headers(),
+  headers: async () => new Headers([...headerJar]),
 }
 
 /** redirect() в Next.js бросает исключение — повторяем это, чтобы проверять перенаправления */

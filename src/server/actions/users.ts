@@ -1,5 +1,6 @@
 "use server"
 
+import { Prisma } from "@prisma/client"
 import { revalidatePath } from "next/cache"
 import { prisma } from "@/lib/db"
 import { hashPassword, requireAdmin } from "@/lib/auth"
@@ -30,14 +31,16 @@ export async function resetUserPasswordAction(userId: string, password: unknown)
   await requireAdmin()
   const parsed = newPasswordSchema.safeParse(password)
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0].message }
-  // новая версия сессии — пользователя выкинет со всех устройств
+  // новая версия сессии — пользователя выкинет со всех устройств; Telegram тоже отвязываем,
+  // чтобы бот не продолжал действовать от его имени
   await prisma.user.update({
     where: { id: userId },
     data: {
       passwordHash: await hashPassword(parsed.data),
       sessionVersion: { increment: 1 },
-      failedLogins: 0,
-      lockedUntil: null,
+      telegramChatId: null,
+      telegramLinkedAt: null,
+      telegramState: Prisma.DbNull,
     },
   })
   refresh()

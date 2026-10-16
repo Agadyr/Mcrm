@@ -29,8 +29,8 @@ model User {
   phone            String?
   sessionVersion   Int       @default(0) // увеличивается при смене пароля/блокировке — старые сессии перестают работать
   lastLoginAt      DateTime?
-  failedLogins     Int       @default(0) // неверные пароли подряд
-  lockedUntil      DateTime? // после 5 неверных паролей вход закрыт на 15 минут
+  failedLogins     Int       @default(0) // не используется: подбор пароля ограничивается по паре IP + логин (RateLimit)
+  lockedUntil      DateTime? // не используется, см. RateLimit
   telegramChatId   String? // куда слать уведомления
   telegramLinkCode String?   @unique // одноразовый код для привязки через t.me/бот?start=код
   telegramLinkedAt DateTime?
@@ -334,4 +334,14 @@ model KaspiOrder {
   @@unique([ownerId, kaspiId])
   @@index([ownerId, state])
   @@index([ownerId, orderedAt])
+}
+
+/// Счётчик попыток против подбора пароля и спама: вход — по паре «IP + логин», регистрация верификатора — по IP
+model RateLimit {
+  key          String    @id // "login:<ip>:<логин>" или "signup:<ip>"
+  count        Int       @default(0) // попыток в текущем окне
+  windowStart  DateTime  @default(now())
+  blockedUntil DateTime? // до этого времени попытки отклоняются
+
+  @@index([windowStart])
 }

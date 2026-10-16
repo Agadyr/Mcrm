@@ -3,6 +3,7 @@ import { BuildingIcon, ClockIcon, PhoneIcon } from "lucide-react"
 import { requireAdmin } from "@/lib/auth"
 import { prisma } from "@/lib/db"
 import { formatDate, formatDateTime } from "@/lib/format"
+import { instantToDate } from "@/lib/dates"
 import { PageHeader } from "@/components/page-header"
 import { RoleBadge, UserAvatar } from "@/components/user-avatar"
 import { cn } from "@/lib/utils"
@@ -107,7 +108,7 @@ export default async function UsersPage() {
               <div>
                 {u.lastLoginAt ? "Последний вход" : "Создан"}
                 <div className="text-sm font-medium text-foreground">
-                  {u.lastLoginAt ? formatDateTime(u.lastLoginAt) : formatDate(u.createdAt)}
+                  {u.lastLoginAt ? formatDateTime(u.lastLoginAt) : formatDate(instantToDate(u.createdAt))}
                 </div>
               </div>
             </div>

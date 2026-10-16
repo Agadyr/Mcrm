@@ -12,6 +12,20 @@ const nextConfig: NextConfig = {
     serverActions: { bodySizeLimit: "15mb" },
   },
   serverExternalPackages: ["exceljs"],
+  // базовые заголовки безопасности: сайт нельзя встроить в чужой iframe (кликджекинг),
+  // браузер не угадывает тип файлов, а адрес страницы не уходит на чужие сайты целиком
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+        ],
+      },
+    ]
+  },
 }
 
 export default nextConfig

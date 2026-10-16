@@ -8,7 +8,7 @@ export const loginSchema = z.object({
 export const changePasswordSchema = z
   .object({
     currentPassword: z.string().min(1, "Введите текущий пароль"),
-    newPassword: z.string().min(6, "Минимум 6 символов").max(100),
+    newPassword: z.string().min(8, "Минимум 8 символов").max(100),
     confirmPassword: z.string(),
   })
   .refine((d) => d.newPassword === d.confirmPassword, {
