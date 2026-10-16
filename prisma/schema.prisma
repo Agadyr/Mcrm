@@ -46,6 +46,7 @@ model User {
   kaspiShop          KaspiShop?
   kaspiOrders        KaspiOrder[]
   kaspiOffers        KaspiOffer[]
+  customers          Customer[]
 }
 
 // ───────── Товары ─────────
@@ -136,12 +137,18 @@ model Sale {
   payments   SalePayment[]
   kaspiOrder KaspiOrder?
 
+  customerId String? // клиент из базы; buyerName/buyerPhone остаются как снимок на момент продажи
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
   @@index([soldAt])
   @@index([phoneId, cancelledAt])
   @@index([buyerName])
+  @@index([customerId])
 }
 
-/** Оплата по продаже: первая — при продаже, следующие — когда покупатель возвращает долг */
+/**
+ * Оплата по продаже: первая — при продаже, следующие — когда покупатель возвращает долг
+ */
 model SalePayment {
   id        String        @id @default(cuid())
   saleId    String
@@ -263,7 +270,9 @@ model PhoneEvent {
 
 // ─── Kaspi магазин ───────────────────────────────────────────────
 
-/** Подключение магазина на Kaspi.kz: токен API из кабинета продавца (зашифрован ключом из AUTH_SECRET) */
+/**
+ * Подключение магазина на Kaspi.kz: токен API из кабинета продавца (зашифрован ключом из AUTH_SECRET)
+ */
 model KaspiShop {
   id            String    @id @default(cuid())
   ownerId       String    @unique
@@ -285,7 +294,9 @@ model KaspiShop {
   syncStartedAt DateTime? // идёт синхронизация: захват, чтобы два запуска не обрабатывали заказы одновременно
 }
 
-/** Товар в прайс-листе Kaspi. Остаток считается по складу CRM: телефоны «В наличии» с этой моделью (памятью, цветом) */
+/**
+ * Товар в прайс-листе Kaspi. Остаток считается по складу CRM: телефоны «В наличии» с этой моделью (памятью, цветом)
+ */
 model KaspiOffer {
   id           String   @id @default(cuid())
   ownerId      String
@@ -305,7 +316,9 @@ model KaspiOffer {
   @@unique([ownerId, sku])
 }
 
-/** Заказ из Kaspi магазина (копия для CRM, обновляется синхронизацией) */
+/**
+ * Заказ из Kaspi магазина (копия для CRM, обновляется синхронизацией)
+ */
 model KaspiOrder {
   id                String    @id @default(cuid())
   ownerId           String
@@ -348,4 +361,26 @@ model RateLimit {
   blockedUntil DateTime? // до этого времени попытки отклоняются
 
   @@index([windowStart])
+}
+
+// ─── Клиенты ─────────────────────────────────────────────────────
+
+/**
+ * Покупатель магазина. Находится по телефону (+7XXXXXXXXXX) при каждой продаже — так видно все его покупки и долги
+ */
+model Customer {
+  id        String   @id @default(cuid())
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name      String
+  phone     String? // всегда в виде +7XXXXXXXXXX
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sales Sale[]
+
+  // один клиент на номер в пределах магазина (клиентов без номера может быть сколько угодно)
+  @@unique([ownerId, phone])
+  @@index([ownerId, name])
 }

@@ -1,15 +1,17 @@
 import type { Metadata } from "next"
 import Link from "next/link"
-import { BriefcaseIcon, SearchIcon, ShieldCheckIcon, SmartphoneIcon, UserIcon } from "lucide-react"
+import { BriefcaseIcon, ContactRoundIcon, SearchIcon, ShieldCheckIcon, SmartphoneIcon, UserIcon } from "lucide-react"
 import { prisma } from "@/lib/db"
 import { requireUser } from "@/lib/auth"
 import { formatDate, phoneTitle } from "@/lib/format"
+import { formatCustomerPhone } from "@/lib/customers"
 import { PageHeader, EmptyState } from "@/components/page-header"
 import { PhoneStatusBadge, VerificationStatusBadge } from "@/components/status-badge"
 import { SearchBox } from "@/components/search-box"
 import { SearchScan } from "@/components/search-scan"
 import { CopyText } from "@/components/copy-text"
 import { displayName } from "@/server/access"
+import { customerSearchWhere } from "@/server/customers"
 import { buildPhoneWhere, parsePhoneFilters } from "@/server/phone-filters"
 import { buildVerificationWhere, parseVerificationFilters } from "@/server/verification-filters"
 
@@ -25,7 +27,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
   if (!q) {
     return (
       <>
-        <PageHeader title="Поиск" description="По IMEI, модели, серийному номеру, поставщику, дате (например 07.10.2026), человеку, верификатору или покупателю" />
+        <PageHeader title="Поиск" description="По IMEI, модели, серийному номеру, поставщику, дате (например 07.10.2026), человеку, верификатору, покупателю или клиенту" />
         <div className="flex max-w-xl gap-2">
           <SearchBox autoFocus className="flex-1" />
           <SearchScan />
@@ -35,7 +37,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
     )
   }
 
-  const [phones, verifications, people, agents] = await Promise.all([
+  const [phones, verifications, people, agents, customers] = await Promise.all([
     // у верификатора нет склада — его телефоны ищем среди верификаций
     isVerifier
       ? Promise.resolve([])
@@ -77,9 +79,18 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
           select: { id: true, name: true, login: true, phone: true },
           take: 10,
         }),
+    // клиенты-покупатели — только у компании
+    isVerifier
+      ? Promise.resolve([])
+      : prisma.customer.findMany({
+          where: { ownerId: user.id, ...customerSearchWhere(q) },
+          select: { id: true, name: true, phone: true },
+          orderBy: { updatedAt: "desc" },
+          take: 10,
+        }),
   ])
 
-  const total = phones.length + verifications.length + people.length + agents.length
+  const total = phones.length + verifications.length + people.length + agents.length + customers.length
 
   return (
     <>
@@ -99,6 +110,17 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
                 <Link key={a.id} href={`/verifications?verifier=${a.id}`} className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-muted/40">
                   <span className="font-medium">{displayName(a)}</span>
                   {a.phone && <CopyText value={a.phone} />}
+                </Link>
+              ))}
+            </Section>
+          )}
+
+          {customers.length > 0 && (
+            <Section title="Клиенты" icon={<ContactRoundIcon />}>
+              {customers.map((c) => (
+                <Link key={c.id} href={`/customers/${c.id}`} className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-muted/40">
+                  <span className="font-medium">{c.name}</span>
+                  {c.phone && <span className="text-sm text-muted-foreground tabular-nums">{formatCustomerPhone(c.phone)}</span>}
                 </Link>
               ))}
             </Section>

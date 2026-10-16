@@ -8,8 +8,10 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { FormField } from "@/components/form-field"
+import { CustomerAutocomplete } from "@/components/customer-autocomplete"
 import { ConfirmDialog } from "@/components/confirm-dialog"
 import { formatMoney } from "@/lib/format"
+import { formatCustomerPhone } from "@/lib/customers"
 import { deleteSalePaymentAction, updateSaleInfoAction } from "@/server/actions/sales"
 
 /** Покупатель, срок возврата долга и заметка */
@@ -29,6 +31,8 @@ export function SaleInfoForm({
   const changed = (Object.keys(v) as (keyof typeof v)[]).some((k) => v[k] !== defaults[k])
   const set = (k: keyof typeof v) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setV((p) => ({ ...p, [k]: e.target.value }))
+  const pickCustomer = (c: { name: string; phone: string | null }) =>
+    setV((p) => ({ ...p, buyerName: c.name, buyerPhone: formatCustomerPhone(c.phone) }))
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
@@ -48,10 +52,23 @@ export function SaleInfoForm({
   return (
     <form onSubmit={submit} className="grid gap-3 sm:grid-cols-2">
       <FormField label="Покупатель" htmlFor="buyerName" required={hasDebt} error={errors.buyerName}>
-        <Input id="buyerName" value={v.buyerName} onChange={set("buyerName")} placeholder="Имя" />
+        <CustomerAutocomplete
+          id="buyerName"
+          value={v.buyerName}
+          onChange={(buyerName) => setV((p) => ({ ...p, buyerName }))}
+          onPick={pickCustomer}
+          placeholder="Имя"
+        />
       </FormField>
       <FormField label="Телефон покупателя" htmlFor="buyerPhone" error={errors.buyerPhone}>
-        <Input id="buyerPhone" type="tel" value={v.buyerPhone} onChange={set("buyerPhone")} placeholder="+7 7__ ___ __ __" />
+        <CustomerAutocomplete
+          id="buyerPhone"
+          type="tel"
+          value={v.buyerPhone}
+          onChange={(buyerPhone) => setV((p) => ({ ...p, buyerPhone }))}
+          onPick={pickCustomer}
+          placeholder="+7 7__ ___ __ __"
+        />
       </FormField>
       {hasDebt && (
         <FormField label="Вернёт долг до" htmlFor="dueDate" error={errors.dueDate}>

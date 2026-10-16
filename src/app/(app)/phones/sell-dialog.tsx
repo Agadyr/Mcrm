@@ -12,12 +12,14 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogD
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { FormField } from "@/components/form-field"
+import { CustomerAutocomplete } from "@/components/customer-autocomplete"
 import { MoneyInput } from "@/components/money-input"
 import { NativeSelect } from "@/components/native-select"
 import { isYmd, todayYmd } from "@/lib/dates"
 import { formatMoney } from "@/lib/format"
 import { PAYMENT_METHOD_LABEL, PAYMENT_METHODS, SALE_METHODS } from "@/lib/labels"
 import { cn } from "@/lib/utils"
+import { formatCustomerPhone } from "@/lib/customers"
 import { saleSchema, type SaleData, type SaleInput } from "@/lib/validators/phone"
 import { sellPhoneAction } from "@/server/actions/phones"
 
@@ -59,6 +61,12 @@ function SellDialogInner({
     const d = new Date(`${isYmd(soldAt ?? "") ? soldAt : todayYmd()}T00:00:00Z`)
     d.setUTCDate(d.getUTCDate() + days)
     form.setValue("dueDate", d.toISOString().slice(0, 10), { shouldValidate: true })
+  }
+
+  /** клиент из базы: имя и номер сразу в оба поля */
+  const pickCustomer = (c: { name: string; phone: string | null }) => {
+    form.setValue("buyerName", c.name, { shouldValidate: true })
+    form.setValue("buyerPhone", formatCustomerPhone(c.phone), { shouldValidate: true })
   }
 
   async function onSubmit() {
@@ -171,9 +179,33 @@ function SellDialogInner({
               </div>
             </div>
           )}
-          <FormField label="Покупатель" htmlFor="buyerName" required={onDebt} error={errors.buyerName?.message}>
-            <Input id="buyerName" placeholder="Имя" {...form.register("buyerName")} />
-          </FormField>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Покупатель" htmlFor="buyerName" required={onDebt} error={errors.buyerName?.message}>
+              <Controller
+                control={form.control}
+                name="buyerName"
+                render={({ field }) => (
+                  <CustomerAutocomplete id="buyerName" placeholder="Имя" value={field.value ?? ""} onChange={field.onChange} onPick={pickCustomer} />
+                )}
+              />
+            </FormField>
+            <FormField label="Телефон" htmlFor="buyerPhone" error={errors.buyerPhone?.message}>
+              <Controller
+                control={form.control}
+                name="buyerPhone"
+                render={({ field }) => (
+                  <CustomerAutocomplete
+                    id="buyerPhone"
+                    type="tel"
+                    placeholder="+7 7__ ___ __ __"
+                    value={field.value ?? ""}
+                    onChange={field.onChange}
+                    onPick={pickCustomer}
+                  />
+                )}
+              />
+            </FormField>
+          </div>
           <FormField label="Заметка" htmlFor="saleNote" error={errors.note?.message}>
             <Textarea id="saleNote" rows={2} {...form.register("note")} />
           </FormField>

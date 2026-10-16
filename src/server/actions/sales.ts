@@ -8,6 +8,7 @@ import { formatDate, formatMoney } from "@/lib/format"
 import { PAYMENT_METHOD_LABEL } from "@/lib/labels"
 import { fieldErrorsOf, optDate, optText, type ActionResult } from "@/lib/validators/common"
 import { salePaymentSchema } from "@/lib/validators/phone"
+import { findOrCreateCustomer } from "@/server/customers"
 import { logEvent } from "@/server/history"
 
 // Продажи в долг: покупатель возвращает деньги частями, каждая оплата сохраняется отдельно.
@@ -118,7 +119,9 @@ export async function updateSaleInfoAction(saleId: string, input: unknown): Prom
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.sale.update({ where: { id: saleId }, data: d })
+    // номер поменяли — продажа переходит к клиенту с этим номером
+    const customerId = await findOrCreateCustomer(tx, user.id, d.buyerName, d.buyerPhone)
+    await tx.sale.update({ where: { id: saleId }, data: { ...d, customerId } })
     if (+(d.dueDate ?? 0) !== +(sale.dueDate ?? 0) && hasDebt) {
       await logEvent(
         tx,
