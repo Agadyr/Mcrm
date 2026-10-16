@@ -4,12 +4,12 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { prisma } from "@/lib/db"
 import { requireUser } from "@/lib/auth"
-import { decryptSecret, encryptSecret } from "@/lib/secret-box"
+import { encryptSecret } from "@/lib/secret-box"
 import { fieldErrorsOf, optText, type ActionResult } from "@/lib/validators/common"
 import { todayYmd } from "@/lib/dates"
 import { KASPI_CANCEL_REASONS, type KaspiCancelReason } from "@/lib/kaspi-labels"
 import { KaspiError, acceptOrder, assembleOrder, cancelOrder, checkKaspiToken, completeOrder, sendImei, tokenHint, type KaspiEntry } from "@/server/kaspi"
-import { syncKaspiOrders } from "@/server/kaspi-sync"
+import { TOKEN_UNREADABLE, openShopToken, syncKaspiOrders } from "@/server/kaspi-sync"
 import { sellPhoneAction } from "@/server/actions/phones"
 
 // Подключение магазина Kaspi. Токен проверяется у Kaspi до сохранения и хранится зашифрованным.
@@ -38,7 +38,7 @@ export async function connectKaspiAction(input: unknown): Promise<ActionResult> 
   const check = await checkKaspiToken(token)
   if (!check.ok) return { ok: false, error: check.message, fieldErrors: check.reason === "invalid" ? { token: check.message } : undefined }
 
-  const data = { tokenEnc: encryptSecret(token), tokenHint: tokenHint(token), shopName, status: "ACTIVE", lastError: null, lastCheckedAt: new Date() }
+  const data = { tokenEnc: encryptSecret(token), tokenHint: tokenHint(token), shopName, status: "ACTIVE", lastError: null, lastSyncError: null, lastCheckedAt: new Date() }
   await prisma.kaspiShop.upsert({ where: { ownerId: user.id }, create: { ownerId: user.id, ...data }, update: { ...data, connectedAt: new Date() } })
   refresh()
   return { ok: true, data: undefined }
@@ -49,7 +49,12 @@ export async function recheckKaspiAction(): Promise<ActionResult<{ ok: boolean; 
   const user = await requireUser()
   const shop = await prisma.kaspiShop.findUnique({ where: { ownerId: user.id } })
   if (!shop) return { ok: false, error: "Магазин не подключён" }
-  const check = await checkKaspiToken(decryptSecret(shop.tokenEnc))
+  const token = await openShopToken(shop)
+  if (token === null) {
+    refresh()
+    return { ok: true, data: { ok: false, message: TOKEN_UNREADABLE } }
+  }
+  const check = await checkKaspiToken(token)
   // «Kaspi недоступен» — не повод считать токен плохим
   const status = check.ok ? "ACTIVE" : check.reason === "invalid" ? "INVALID" : shop.status
   await prisma.kaspiShop.update({
@@ -71,7 +76,16 @@ export async function disconnectKaspiAction(): Promise<ActionResult> {
 
 async function shopOf(userId: string) {
   const shop = await prisma.kaspiShop.findUnique({ where: { ownerId: userId } })
-  return shop ? { shop, token: decryptSecret(shop.tokenEnc) } : null
+  if (!shop) return null
+  const token = await openShopToken(shop)
+  return {
+    shop,
+    // токен не расшифровался — понятная ошибка всплывёт при обращении к Kaspi (внутри try у каждого действия)
+    get token(): string {
+      if (token === null) throw new KaspiError(TOKEN_UNREADABLE, "invalid")
+      return token
+    },
+  }
 }
 
 /** Обновить заказы из Kaspi */

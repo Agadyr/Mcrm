@@ -8,20 +8,24 @@ import {
   completeKaspiOrderAction,
   connectKaspiAction,
   createSaleFromKaspiOrderAction,
+  recheckKaspiAction,
   setKaspiAutoAcceptAction,
   syncKaspiAction,
 } from "@/server/actions/kaspi"
-import { syncAllKaspiShops, syncKaspiOrders } from "@/server/kaspi-sync"
+import { encryptSecret } from "@/lib/secret-box"
+import { TOKEN_UNREADABLE, purgeOldKaspiPii, syncAllKaspiShops, syncKaspiOrders } from "@/server/kaspi-sync"
 import { createPhone, createUser, loginAs } from "../support/factories"
 
 // Поддельный Kaspi: список заказов по этапам, товары заказа, принятие/отмена. Формат — JSON:API, как у настоящего API.
 const GOOD = "kaspi-good-token-0123456789abcdef"
 const NOW = Date.now()
 
-type FakeOrder = { id: string; state: string; status: string; total: number; code: string }
+// old — заказ старше окна в 14 дней: в списках по этапам его нет, найти можно только по номеру
+type FakeOrder = { id: string; state: string; status: string; total: number; code: string; old?: boolean }
 let orders: FakeOrder[] = []
 let posts: { url: string; headers: Record<string, string>; body: { data: { id?: string; type: string; attributes: Record<string, unknown>; relationships?: { entry: { data: { id: string } } } } } }[] = []
 let down = false
+let codeLookups: string[] = []
 
 const attrs = (o: FakeOrder) => ({
   code: o.code,
@@ -31,7 +35,7 @@ const attrs = (o: FakeOrder) => ({
   paymentMode: "PREPAID",
   deliveryMode: "DELIVERY_PICKUP",
   isKaspiDelivery: false,
-  creationDate: NOW - 3_600_000,
+  creationDate: o.old ? NOW - 20 * 86_400_000 : NOW - 3_600_000,
   customer: { firstName: "Ержан", lastName: "Ахметов", cellPhone: "7011234567" },
   deliveryAddress: { formattedAddress: "Алматы, Абая 1" },
   isImeiRequired: !noImei.has(o.id),
@@ -49,6 +53,7 @@ beforeEach(() => {
   ]
   posts = []
   down = false
+  codeLookups = []
   assembled.clear()
   noImei.clear()
   vi.mocked(sendTelegram).mockClear()
@@ -69,13 +74,24 @@ beforeEach(() => {
       if (entries) {
         return json({ data: [{ id: `entry-${entries[1]}`, attributes: { quantity: 1, totalPrice: orders.find((o) => o.id === entries[1])!.total, basePrice: 1, isImeiRequired: !noImei.has(entries[1]), offer: { name: "iPhone 15 Pro 256GB", code: "SKU1" } } }] })
       }
+      const toItem = (o: FakeOrder) => ({ id: o.id, type: "orders", attributes: attrs(o), relationships: { entries: { links: { related: `https://kaspi.kz/shop/api/v2/orders/${o.id}/entries` } } } })
+      const code = url.searchParams.get("filter[orders][code]")
+      if (code) {
+        codeLookups.push(code)
+        return json({ data: orders.filter((o) => o.code === code).map(toItem), meta: { pageCount: 1 } })
+      }
       const state = url.searchParams.get("filter[orders][state]")
-      const data = orders.filter((o) => o.state === state).map((o) => ({ id: o.id, type: "orders", attributes: attrs(o), relationships: { entries: { links: { related: `https://kaspi.kz/shop/api/v2/orders/${o.id}/entries` } } } }))
+      const data = orders.filter((o) => o.state === state && !o.old).map(toItem)
       return json({ data, meta: { pageCount: 1 } })
     })
   )
 })
 afterEach(() => vi.unstubAllGlobals())
+
+/** Товар прайса с артикулом SKU1 (его присылает поддельный Kaspi в позициях заказа) */
+async function offerSku1(ownerId: string) {
+  await prisma.kaspiOffer.create({ data: { ownerId, sku: "SKU1", title: "Apple iPhone 15 Pro 256GB", model: "iPhone 15 Pro", memoryGb: 256, price: 520_000 } })
+}
 
 async function connected(opts: { autoAccept?: boolean } = {}) {
   const user = await createUser({ telegramChatId: "555" })
@@ -116,6 +132,8 @@ describe("заказы Kaspi", () => {
 
   it("автопринятие: новый заказ принимается в Kaspi, в Telegram — «принят автоматически»", async () => {
     const user = await connected({ autoAccept: true })
+    await offerSku1(user.id)
+    await createPhone(user.id)
     await syncKaspiOrders(user.id, { force: true }) // первая загрузка принимает новые заказы тоже
     expect(posts).toHaveLength(1)
     expect(posts[0].body.data).toMatchObject({ id: "o1", attributes: { code: "100001", status: "ACCEPTED_BY_MERCHANT" } })
@@ -215,5 +233,121 @@ describe("заказы Kaspi", () => {
     const results = await syncAllKaspiShops()
     expect(results).toHaveLength(1)
     expect(results[0].ownerId).toBe(a.id)
+  })
+
+  it("автопринятие только при наличии: артикул из прайса и телефоны на складе, иначе — решение за продавцом", async () => {
+    const user = await connected({ autoAccept: true })
+    // артикула SKU1 нет в прайсе — не принимаем
+    await syncKaspiOrders(user.id, { force: true })
+    expect(posts).toHaveLength(0)
+    expect((await prisma.kaspiOrder.findFirstOrThrow({ where: { kaspiId: "o1" } })).status).toBe("APPROVED_BY_BANK")
+
+    // в прайсе есть, но телефонов «В наличии» нет (проданный не считается)
+    await offerSku1(user.id)
+    await createPhone(user.id, { status: "SOLD" })
+    orders.push({ id: "o5", code: "100005", state: "NEW", status: "APPROVED_BY_BANK", total: 100_000 })
+    await syncKaspiOrders(user.id, { force: true })
+    expect(posts).toHaveLength(0)
+    expect(vi.mocked(sendTelegram).mock.calls.at(-1)![1]).toContain("Не принят автоматически")
+
+    // один телефон на складе — из двух новых заказов принимается один
+    await createPhone(user.id)
+    orders.push({ id: "o8", code: "100008", state: "NEW", status: "APPROVED_BY_BANK", total: 100_000 })
+    orders.push({ id: "o9", code: "100009", state: "NEW", status: "APPROVED_BY_BANK", total: 100_000 })
+    expect(await syncKaspiOrders(user.id, { force: true })).toMatchObject({ created: 2, accepted: 1 })
+    expect(posts).toHaveLength(1)
+    expect(posts[0].body.data.id).toBe("o8")
+    expect((await prisma.kaspiOrder.findFirstOrThrow({ where: { kaspiId: "o9" } })).status).toBe("APPROVED_BY_BANK")
+  })
+
+  it("два одновременных запуска: заказы обрабатывает один — без двойного автопринятия и сообщений", async () => {
+    const user = await connected({ autoAccept: true })
+    await offerSku1(user.id)
+    await createPhone(user.id)
+    await createPhone(user.id)
+    await syncKaspiOrders(user.id, { force: true })
+    expect(posts).toHaveLength(1)
+
+    orders.push({ id: "o5", code: "100005", state: "NEW", status: "APPROVED_BY_BANK", total: 100_000 })
+    const [a, b] = await Promise.all([syncKaspiOrders(user.id, { force: true }), syncKaspiOrders(user.id, { force: true })])
+    expect([a.skipped, b.skipped].filter(Boolean)).toHaveLength(1)
+    expect(a.created + b.created).toBe(1)
+    expect(posts).toHaveLength(2)
+    expect(sendTelegram).toHaveBeenCalledTimes(1)
+    expect((await prisma.kaspiShop.findUniqueOrThrow({ where: { ownerId: user.id } })).syncStartedAt).toBeNull() // захват отпущен
+
+    // идёт другая синхронизация — ждём её; брошенный захват (процесс упал) через 5 минут не мешает
+    await prisma.kaspiShop.update({ where: { ownerId: user.id }, data: { syncStartedAt: new Date() } })
+    expect(await syncKaspiOrders(user.id, { force: true })).toMatchObject({ skipped: true })
+    await prisma.kaspiShop.update({ where: { ownerId: user.id }, data: { syncStartedAt: new Date(Date.now() - 10 * 60_000) } })
+    expect((await syncKaspiOrders(user.id, { force: true })).skipped).toBeUndefined()
+  })
+
+  it("токен не расшифровывается (сменили AUTH_SECRET): магазин «токен не работает», понятная ошибка, расписание идёт дальше", async () => {
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {})
+    const broken = await connected()
+    await syncKaspiOrders(broken.id, { force: true })
+    const o1 = await prisma.kaspiOrder.findFirstOrThrow({ where: { ownerId: broken.id, kaspiId: "o1" } })
+    vi.stubEnv("AUTH_SECRET", "другой-секрет-другой-секрет-другой")
+    const foreign = encryptSecret(GOOD)
+    vi.unstubAllEnvs()
+    await prisma.kaspiShop.update({ where: { ownerId: broken.id }, data: { tokenEnc: foreign } })
+
+    expect(await acceptKaspiOrderAction(o1.id)).toEqual({ ok: false, error: TOKEN_UNREADABLE })
+    expect(await prisma.kaspiShop.findUniqueOrThrow({ where: { ownerId: broken.id } })).toMatchObject({ status: "INVALID", lastError: TOKEN_UNREADABLE })
+    expect(await recheckKaspiAction()).toEqual({ ok: true, data: { ok: false, message: TOKEN_UNREADABLE } })
+
+    // в расписании сломанный магазин не мешает остальным
+    await prisma.kaspiShop.update({ where: { ownerId: broken.id }, data: { status: "ACTIVE" } })
+    const other = await connected()
+    const results = await syncAllKaspiShops()
+    expect(results.find((r) => r.ownerId === broken.id)).toMatchObject({ error: TOKEN_UNREADABLE })
+    expect(results.find((r) => r.ownerId === other.id)).toMatchObject({ created: 3 })
+    expect(await prisma.kaspiShop.findUniqueOrThrow({ where: { ownerId: broken.id } })).toMatchObject({ status: "INVALID", lastSyncError: TOKEN_UNREADABLE })
+
+    // новый токен — снова работает
+    await loginAs(broken)
+    expect((await connectKaspiAction({ token: GOOD })).ok).toBe(true)
+    expect(await prisma.kaspiShop.findUniqueOrThrow({ where: { ownerId: broken.id } })).toMatchObject({ status: "ACTIVE", lastError: null, lastSyncError: null })
+    quiet.mockRestore()
+  })
+
+  it("незавершённые заказы старше 14 дней обновляются запросом по номеру", async () => {
+    const user = await connected()
+    const old = { totalPrice: 300_000, orderedAt: new Date(NOW - 20 * 86_400_000) }
+    await prisma.kaspiOrder.createMany({
+      data: [
+        { ownerId: user.id, kaspiId: "old1", code: "900001", state: "KASPI_DELIVERY", status: "ACCEPTED_BY_MERCHANT", ...old },
+        { ownerId: user.id, kaspiId: "old2", code: "900002", state: "DELIVERY", status: "ACCEPTED_BY_MERCHANT", ...old }, // Kaspi его не найдёт
+        { ownerId: user.id, kaspiId: "old3", code: "900003", state: "ARCHIVE", status: "COMPLETED", ...old }, // завершён — не трогаем
+      ],
+    })
+    orders.push({ id: "old1", code: "900001", state: "ARCHIVE", status: "COMPLETED", total: 300_000, old: true })
+
+    await syncKaspiOrders(user.id, { force: true })
+    expect(codeLookups.sort()).toEqual(["900001", "900002"])
+    expect(await prisma.kaspiOrder.findFirstOrThrow({ where: { kaspiId: "old1" } })).toMatchObject({ state: "ARCHIVE", status: "COMPLETED", customerName: "Ержан Ахметов" })
+    expect(await prisma.kaspiOrder.findFirstOrThrow({ where: { kaspiId: "old2" } })).toMatchObject({ state: "DELIVERY", status: "ACCEPTED_BY_MERCHANT" })
+
+    codeLookups = []
+    await syncKaspiOrders(user.id, { force: true })
+    expect(codeLookups).toEqual(["900002"]) // завершённый больше не запрашиваем
+  })
+
+  it("телефон и адрес покупателя в архивных заказах старше 90 дней стираются (по расписанию)", async () => {
+    const user = await createUser()
+    const base = { ownerId: user.id, status: "COMPLETED", totalPrice: 100_000, customerName: "Ержан", customerPhone: "+77011234567", address: "Алматы, Абая 1" }
+    await prisma.kaspiOrder.createMany({
+      data: [
+        { ...base, kaspiId: "a1", code: "1", state: "ARCHIVE", orderedAt: new Date(NOW - 100 * 86_400_000) },
+        { ...base, kaspiId: "a2", code: "2", state: "ARCHIVE", orderedAt: new Date(NOW - 30 * 86_400_000) },
+        { ...base, kaspiId: "a3", code: "3", state: "DELIVERY", status: "ACCEPTED_BY_MERCHANT", orderedAt: new Date(NOW - 100 * 86_400_000) },
+      ],
+    })
+    await syncAllKaspiShops()
+    expect(await prisma.kaspiOrder.findFirstOrThrow({ where: { kaspiId: "a1" } })).toMatchObject({ code: "1", totalPrice: 100_000, customerName: "Ержан", customerPhone: null, address: null })
+    expect(await prisma.kaspiOrder.findFirstOrThrow({ where: { kaspiId: "a2" } })).toMatchObject({ customerPhone: "+77011234567", address: "Алматы, Абая 1" })
+    expect(await prisma.kaspiOrder.findFirstOrThrow({ where: { kaspiId: "a3" } })).toMatchObject({ customerPhone: "+77011234567" })
+    expect(await purgeOldKaspiPii()).toBe(0)
   })
 })
