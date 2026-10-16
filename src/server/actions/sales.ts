@@ -21,6 +21,10 @@ function findOwnSale(id: string, ownerId: string) {
   return prisma.sale.findFirst({ where: { id, phone: { ownerId } }, include: { phone: { select: { model: true } } } })
 }
 
+function tooMuch(debt: number): ActionResult<never> {
+  return { ok: false, error: "Сумма больше остатка долга", fieldErrors: { amount: `Долг всего ${formatMoney(Math.max(debt, 0))}` } }
+}
+
 /** Покупатель принёс деньги */
 export async function addSalePaymentAction(saleId: string, input: unknown): Promise<ActionResult> {
   const user = await requireUser()
@@ -33,17 +37,21 @@ export async function addSalePaymentAction(saleId: string, input: unknown): Prom
   if (sale.cancelledAt) return { ok: false, error: "Продажа отменена" }
   const debt = sale.salePrice - sale.paidAmount
   if (debt <= 0) return { ok: false, error: "Долга нет — продажа уже оплачена" }
-  if (d.amount > debt) {
-    return { ok: false, error: "Больше, чем долг", fieldErrors: { amount: `Долг всего ${formatMoney(debt)}` } }
-  }
+  // быстрая проверка для формы; окончательная — атомарно в транзакции ниже
+  if (d.amount > debt) return tooMuch(debt)
 
-  const left = debt - d.amount
-  await prisma.$transaction(async (tx) => {
-    await tx.salePayment.create({ data: { saleId, amount: d.amount, paidAt: d.paidAt, method: d.method, note: d.note } })
-    await tx.sale.update({
-      where: { id: saleId },
-      data: { paidAmount: { increment: d.amount }, ...(left > 0 && d.dueDate ? { dueDate: d.dueDate } : {}) },
+  const paid = await prisma.$transaction(async (tx) => {
+    // условное обновление: две одновременные оплаты не переплатят долг —
+    // вторая перечитает строку после первой и не пройдёт условие
+    const { count } = await tx.sale.updateMany({
+      where: { id: saleId, cancelledAt: null, paidAmount: { lte: sale.salePrice - d.amount } },
+      data: { paidAmount: { increment: d.amount } },
     })
+    if (!count) return false
+    const { paidAmount } = await tx.sale.findUniqueOrThrow({ where: { id: saleId }, select: { paidAmount: true } })
+    const left = sale.salePrice - paidAmount
+    if (left > 0 && d.dueDate) await tx.sale.update({ where: { id: saleId }, data: { dueDate: d.dueDate } })
+    await tx.salePayment.create({ data: { saleId, amount: d.amount, paidAt: d.paidAt, method: d.method, note: d.note } })
     await logEvent(
       tx,
       sale.phoneId,
@@ -52,7 +60,14 @@ export async function addSalePaymentAction(saleId: string, input: unknown): Prom
         (left > 0 ? `Осталось ${formatMoney(left)}` : "Долг закрыт"),
       user.id
     )
+    return true
   })
+  if (!paid) {
+    // пока заполняли форму, долг уменьшился (другая оплата) или продажу отменили
+    const fresh = await prisma.sale.findUnique({ where: { id: saleId }, select: { salePrice: true, paidAmount: true, cancelledAt: true } })
+    if (!fresh || fresh.cancelledAt) return { ok: false, error: "Продажа отменена" }
+    return tooMuch(fresh.salePrice - fresh.paidAmount)
+  }
   refresh()
   return { ok: true, data: undefined }
 }

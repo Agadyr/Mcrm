@@ -103,6 +103,9 @@ model Phone {
   @@index([ownerId, receivedAt])
   @@index([serialNumber])
   @@index([imei2])
+  // поиск по части IMEI (contains → LIKE '%…%'); расширение pg_trgm создаёт миграция imei_trigram_search
+  @@index([imei1(ops: raw("gin_trgm_ops"))], type: Gin, map: "Phone_imei1_trgm_idx")
+  @@index([imei2(ops: raw("gin_trgm_ops"))], type: Gin, map: "Phone_imei2_trgm_idx")
 }
 
 enum PaymentMethod {

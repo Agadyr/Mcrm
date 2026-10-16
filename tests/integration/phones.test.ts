@@ -203,6 +203,26 @@ describe("deletePhoneAction", () => {
     expect((await prisma.verification.findUniqueOrThrow({ where: { id: v.id } })).phoneId).toBeNull()
   })
 
+  it("проданный не удаляет — сначала отмена продажи", async () => {
+    const user = await shop()
+    const phone = await createPhone(user.id)
+    await sellPhoneAction(phone.id, saleForm())
+    expect(await deletePhoneAction(phone.id)).toEqual({ ok: false, error: "Телефон продан — сначала отмените продажу" })
+    expect(await prisma.sale.count()).toBe(1)
+
+    await cancelSaleAction(phone.id)
+    expect((await deletePhoneAction(phone.id)).ok).toBe(true)
+    expect(await prisma.phone.count()).toBe(0)
+    expect(await prisma.sale.count()).toBe(0)
+  })
+
+  it("активная продажа мешает удалению, даже если статус не «Продан»", async () => {
+    const user = await shop()
+    const phone = await createPhone(user.id)
+    await prisma.sale.create({ data: { phoneId: phone.id, salePrice: 1, soldAt: new Date(), paymentMethod: "CASH" } })
+    expect(await deletePhoneAction(phone.id)).toMatchObject({ ok: false, error: expect.stringContaining("отмените продажу") })
+  })
+
   it("чужой телефон не удаляет", async () => {
     const other = await createUser()
     const phone = await createPhone(other.id)

@@ -202,12 +202,19 @@ export async function cancelSaleAction(phoneId: string): Promise<ActionResult> {
   return { ok: true, data: undefined }
 }
 
-/** Удаляет телефон с историей и продажами. Верификации остаются без связи с товаром. */
+/** Удаляет телефон с историей и отменёнными продажами. Верификации остаются без связи с товаром.
+ *  Проданный (есть активная продажа) удалить нельзя: пропали бы выручка и долг покупателя. */
 export async function deletePhoneAction(id: string): Promise<ActionResult> {
   const user = await requireUser()
   if (user.role === "VERIFIER") return NO_STOCK
-  const { count } = await prisma.phone.deleteMany({ where: { id, ownerId: user.id } })
-  if (!count) return { ok: false, error: "Телефон не найден" }
+  // проверка продажи — в том же запросе: продажа, оформленная параллельно, удалить не даст
+  const { count } = await prisma.phone.deleteMany({
+    where: { id, ownerId: user.id, sales: { none: { cancelledAt: null } } },
+  })
+  if (!count) {
+    const phone = await findOwnPhone(id, user.id)
+    return { ok: false, error: phone ? "Телефон продан — сначала отмените продажу" : "Телефон не найден" }
+  }
   refresh()
   return { ok: true, data: undefined }
 }
