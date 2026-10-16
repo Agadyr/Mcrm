@@ -57,6 +57,8 @@ export default async function KaspiPage({ searchParams }: { searchParams: Promis
     imeiSent: !!o.imeiSentAt,
     waybill: o.waybill,
     waybillNumber: o.waybillNumber,
+    assembled: o.assembled,
+    courierAt: o.courierAt?.toISOString() ?? null,
   }))
   const stockOptions: StockOption[] = stock
 

@@ -52,7 +52,8 @@ export async function syncKaspiOrders(ownerId: string, opts: { force?: boolean }
       }
       const { entriesUrl, ...data } = o
       void entriesUrl
-      const row = { ...data, status, entries: entries as unknown as Prisma.InputJsonValue }
+      // «передан в доставку» не снимаем: сразу после передачи Kaspi может ещё отдавать assembled=false
+      const row = { ...data, assembled: data.assembled || undefined, status, entries: entries as unknown as Prisma.InputJsonValue }
       await prisma.kaspiOrder.upsert({
         where: { ownerId_kaspiId: { ownerId, kaspiId: o.kaspiId } },
         create: { ownerId, ...row },

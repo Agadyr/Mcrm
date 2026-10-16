@@ -7,6 +7,7 @@ import { toast } from "sonner"
 import {
   BanknoteIcon,
   CheckIcon,
+  ExternalLinkIcon,
   FileTextIcon,
   Loader2Icon,
   MapPinIcon,
@@ -59,10 +60,13 @@ export type OrderRow = {
   imeiSent: boolean
   waybill: string | null
   waybillNumber: string | null
+  assembled: boolean
+  courierAt: string | null
 }
 export type StockOption = { id: string; model: string; memoryGb: number | null; color: string | null; imei1: string; purchasePrice: number }
 type Shop = { name: string | null; ok: boolean; autoAccept: boolean; lastSyncAt: string | null; lastSyncError: string | null }
 
+const KASPI_CABINET = "https://kaspi.kz/mc/"
 const STALE_MS = 2 * 60_000
 
 /** Заказы Kaspi магазина: вкладки по этапам, действия по каждому заказу */
@@ -223,7 +227,7 @@ function OrderCard({ order: o, stock }: { order: OrderRow; stock: StockOption[] 
   // IMEI отправлен или не нужен — можно выдавать и передавать в доставку
   const imeiOk = !o.imeiRequired || o.imeiSent
   const canComplete = accepted && o.state !== "KASPI_DELIVERY" && o.state !== "NEW"
-  const canAssemble = accepted && o.state === "KASPI_DELIVERY" && !o.waybill
+  const canAssemble = accepted && o.state === "KASPI_DELIVERY" && !o.assembled
   const needImei = o.hasSale && !o.imeiSent && (o.imeiRequired || o.entries.some((e) => e.id))
 
   function resendImei() {
@@ -341,9 +345,16 @@ function OrderCard({ order: o, stock }: { order: OrderRow; stock: StockOption[] 
               <TruckIcon /> Передать в Kaspi Доставку
             </Button>
           )}
-          {o.waybill && (
-            <a href={o.waybill} target="_blank" rel="noopener noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg border bg-card px-3 text-sm font-medium shadow-xs hover:bg-muted">
-              <FileTextIcon className="size-4" /> Накладная{o.waybillNumber ? ` №${o.waybillNumber}` : ""}
+          {o.assembled && (
+            <a
+              href={o.waybill ?? KASPI_CABINET}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={o.waybill ? "Открыть накладную" : "Kaspi не отдаёт файл накладной по API — распечатайте её в кабинете продавца"}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border bg-card px-3 text-sm font-medium shadow-xs hover:bg-muted"
+            >
+              <FileTextIcon className="size-4" /> {o.waybillNumber ? `Накладная №${o.waybillNumber}` : "Накладная"}
+              {!o.waybill && <ExternalLinkIcon className="size-3.5 text-muted-foreground" />}
             </a>
           )}
           {canCancel && (
@@ -353,6 +364,17 @@ function OrderCard({ order: o, stock }: { order: OrderRow; stock: StockOption[] 
           )}
         </div>
       </div>
+
+      {o.assembled && o.status === "ACCEPTED_BY_MERCHANT" && (
+        <div className="mt-3 flex items-center gap-2 rounded-xl bg-sky-50 px-3 py-2.5 text-sm text-sky-800 dark:bg-sky-950/50 dark:text-sky-200">
+          <TruckIcon className="size-4 shrink-0" />
+          <span>
+            Передан в Kaspi Доставку
+            {o.waybillNumber ? ` · накладная №${o.waybillNumber}` : " · Kaspi формирует накладную"}
+            {o.courierAt && ` · передача курьеру ${formatDateTime(new Date(o.courierAt))}`}
+          </span>
+        </div>
+      )}
 
       {saleOpen && <SaleDialog order={o} stock={stock} onClose={() => setSaleOpen(false)} />}
       {cancelOpen && <CancelDialog order={o} onClose={() => setCancelOpen(false)} />}
@@ -559,7 +581,7 @@ function AssembleDialog({ order, onClose }: { order: OrderRow; onClose: () => vo
     startTransition(async () => {
       const r = await assembleKaspiOrderAction(order.id, places)
       if (!r.ok) return void toast.error(r.error)
-      toast.success("Заказ передан в Kaspi Доставку — накладная появится в заказе")
+      toast.success("Заказ передан в Kaspi Доставку", { description: r.data.waybillNumber ? `Накладная №${r.data.waybillNumber}` : "Kaspi формирует накладную — номер появится в заказе" })
       onClose()
       router.refresh()
     })

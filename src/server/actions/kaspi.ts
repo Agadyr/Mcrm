@@ -213,6 +213,7 @@ export async function completeKaspiOrderAction(orderId: string, securityCode?: s
   const order = await prisma.kaspiOrder.findFirst({ where: { id: orderId, ownerId: user.id } })
   if (!ctx || !order) return { ok: false, error: "Заказ не найден" }
   if (order.status !== "ACCEPTED_BY_MERCHANT") return { ok: false, error: "Выдать можно только принятый заказ" }
+  if (order.assembled) return { ok: false, error: "Заказ уже передан в Kaspi Доставку" }
   if (order.imeiRequired && !order.imeiSentAt) return { ok: false, error: "Сначала укажите IMEI: оформите продажу — CRM отправит IMEI в Kaspi" }
   try {
     await completeOrder(ctx.token, { kaspiId: order.kaspiId, code: order.code }, parsed.data)
@@ -226,7 +227,7 @@ export async function completeKaspiOrderAction(orderId: string, securityCode?: s
 }
 
 /** Передать в Kaspi Доставку: Kaspi сформирует накладную (ссылка появится после обновления) */
-export async function assembleKaspiOrderAction(orderId: string, places: number): Promise<ActionResult> {
+export async function assembleKaspiOrderAction(orderId: string, places: number): Promise<ActionResult<{ waybillNumber: string | null }>> {
   const user = await requireUser()
   if (!Number.isInteger(places) || places < 1 || places > 20) return { ok: false, error: "Число мест — от 1 до 20" }
   const ctx = await shopOf(user.id)
@@ -239,8 +240,10 @@ export async function assembleKaspiOrderAction(orderId: string, places: number):
   } catch (e) {
     return { ok: false, error: e instanceof KaspiError ? e.message : "Kaspi не принял запрос" }
   }
-  // накладную Kaspi формирует сам — подтянем её при обновлении
+  // Kaspi принял — отмечаем сразу; номер накладной Kaspi формирует сам, подтянем его синхронизацией
+  await prisma.kaspiOrder.update({ where: { id: order.id }, data: { assembled: true } })
   await syncKaspiOrders(user.id, { force: true })
+  const fresh = await prisma.kaspiOrder.findUnique({ where: { id: order.id }, select: { waybillNumber: true } })
   refresh()
-  return { ok: true, data: undefined }
+  return { ok: true, data: { waybillNumber: fresh?.waybillNumber ?? null } }
 }

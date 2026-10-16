@@ -149,19 +149,26 @@ const STEPS = [
 
 function Stepper({ current }: { current: number }) {
   return (
-    <ol className="flex items-center gap-2">
+    <ol className="grid grid-cols-3 gap-2" aria-label={`Шаг ${current + 1} из ${STEPS.length}`}>
       {STEPS.map((s, i) => (
-        <li key={s.key} className="flex flex-1 items-center gap-2">
+        <li key={s.key} className="flex flex-col gap-2" aria-current={i === current ? "step" : undefined}>
+          <span className="h-2 overflow-hidden rounded-full bg-muted">
+            <span
+              className={cn(
+                "block h-full rounded-full transition-all duration-500",
+                i < current ? "w-full bg-emerald-600" : i === current ? "w-full bg-primary" : "w-0"
+              )}
+            />
+          </span>
           <span
             className={cn(
-              "flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold transition-colors",
-              i < current ? "bg-emerald-600 text-white" : i === current ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+              "flex items-center gap-1.5 text-xs font-medium",
+              i < current ? "text-emerald-700 dark:text-emerald-400" : i === current ? "text-foreground" : "text-muted-foreground"
             )}
           >
-            {i < current ? <CheckIcon className="size-4" /> : i + 1}
+            {i < current ? <CheckIcon className="size-3.5 shrink-0" /> : <span className="tabular-nums">{i + 1}.</span>}
+            <span className="truncate">{s.label}</span>
           </span>
-          <span className={cn("hidden text-xs font-medium sm:block", i === current ? "text-foreground" : "text-muted-foreground")}>{s.label}</span>
-          {i < STEPS.length - 1 && <span className={cn("h-px flex-1", i < current ? "bg-emerald-600" : "bg-border")} />}
         </li>
       ))}
     </ol>
